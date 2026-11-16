@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS deals (
     product     TEXT    NOT NULL,
     side        TEXT    NOT NULL CHECK (side IN ('buy', 'sell')),
     amount      REAL    NOT NULL,
+    quantity    REAL    NOT NULL DEFAULT 1,
     dealt_at    TEXT    NOT NULL,
     comment     TEXT    NOT NULL DEFAULT '',
     photo       BLOB,
@@ -49,6 +50,7 @@ class Deal:
     photo: bytes | None
     created_at: str
     category: str = "transport"
+    quantity: float = 1.0
 
     @property
     def signed_amount(self) -> float:
@@ -149,6 +151,10 @@ class Database:
             )
         if "legacy_id" not in columns:
             self._conn.execute("ALTER TABLE deals ADD COLUMN legacy_id TEXT")
+        if "quantity" not in columns:
+            self._conn.execute(
+                "ALTER TABLE deals ADD COLUMN quantity REAL NOT NULL DEFAULT 1"
+            )
         self._conn.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS idx_deals_legacy_id
                ON deals (legacy_id)"""
@@ -265,16 +271,18 @@ class Database:
         photo: bytes | None,
         created_at: str,
         category: str = "transport",
+        quantity: float = 1.0,
     ) -> int:
         cur = self._conn.execute(
             """INSERT INTO deals
-               (product, side, amount, dealt_at, comment, photo, created_at,
-                category)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (product, side, amount, quantity, dealt_at, comment, photo,
+                created_at, category)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 product,
                 side,
                 amount,
+                max(1.0, float(quantity)),
                 dealt_at,
                 comment,
                 photo,
@@ -296,11 +304,13 @@ class Database:
         comment: str,
         photo: bytes | None,
         category: str = "transport",
+        quantity: float | None = None,
     ) -> None:
         self._conn.execute(
             """UPDATE deals
                SET product = ?, side = ?, amount = ?, dealt_at = ?,
-                   comment = ?, photo = ?, category = ?
+                   comment = ?, photo = ?, category = ?,
+                   quantity = COALESCE(?, quantity)
                WHERE id = ?""",
             (
                 product,
@@ -310,6 +320,7 @@ class Database:
                 comment,
                 photo,
                 category,
+                None if quantity is None else max(1.0, float(quantity)),
                 deal_id,
             ),
         )
@@ -435,6 +446,56 @@ class Database:
             maximum=max(amounts) if amounts else None,
         )
 
+    def market_own_stats(
+        self,
+        product: str,
+        category: str,
+        days: int = 30,
+        today: date | None = None,
+    ) -> tuple[int, float | None, int, float | None]:
+        """Мои покупки и продажи одного предмета маркета за окно дней.
+
+        Сумма сделки в журнале — это цена × количество, поэтому средняя
+        считается за единицу: сумма / количество.
+        """
+        window = max(1, int(days))
+        end = today or date.today()
+        start = end - timedelta(days=window - 1)
+        needle = (product or "").strip().casefold()
+        if not needle:
+            return 0, None, 0, None
+
+        totals: dict[str, list[float]] = {
+            "buy": [0.0, 0.0, 0.0],
+            "sell": [0.0, 0.0, 0.0],
+        }
+        rows = self._conn.execute(
+            "SELECT product, side, amount, quantity, dealt_at FROM deals"
+            " WHERE category = ?",
+            (category,),
+        ).fetchall()
+        for row in rows:
+            if str(row["product"]).strip().casefold() != needle:
+                continue
+            moment = parse_deal_moment(str(row["dealt_at"]))
+            if moment is None or not (start <= moment.date() <= end):
+                continue
+            bucket = totals.get(str(row["side"]))
+            if bucket is None:
+                continue
+            bucket[0] += 1
+            bucket[1] += float(row["amount"])
+            bucket[2] += float(row["quantity"] or 1.0)
+
+        buy = totals["buy"]
+        sell = totals["sell"]
+        return (
+            int(buy[0]),
+            (buy[1] / buy[2]) if buy[2] else None,
+            int(sell[0]),
+            (sell[1] / sell[2]) if sell[2] else None,
+        )
+
     # --------------------------------------------------------------- settings
     def get_setting(self, key: str, default: str) -> str:
         row = self._conn.execute(
@@ -465,4 +526,5 @@ class Database:
             photo=bytes(row["photo"]) if row["photo"] is not None else None,
             created_at=str(row["created_at"]),
             category=str(row["category"]),
+            quantity=float(row["quantity"] or 1.0),
         )

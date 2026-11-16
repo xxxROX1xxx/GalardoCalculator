@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from . import icons, paths, theme
 from .db import CATEGORIES, Database, Deal
-from .market import MarketPanel
+from .market import KIND_CATEGORY, MarketPanel
 from .widgets import (
     AMOUNT_PATTERN,
     ClickableLineEdit,
@@ -436,6 +436,8 @@ class MainWindow(QWidget):
 
         self.market = MarketPanel()
         self.market.imageRequested.connect(self._show_market_image)
+        self.market.tradeRequested.connect(self._on_market_trade)
+        self.market.set_stats_provider(self._market_stats)
         self.view_stack.addWidget(self.market)
 
         layout.addWidget(self.view_stack, 1)
@@ -789,6 +791,55 @@ class MainWindow(QWidget):
 
     def _show_market_image(self, image: QImage, title: str) -> None:
         self._overlay.show_qimage(image, title)
+
+    def _market_stats(
+        self, product: str, kind: str
+    ) -> tuple[int, float | None, int, float | None]:
+        """Мои сделки по предмету маркета за 30 дней (для карточки маркета)."""
+        category = KIND_CATEGORY.get(kind, "transport")
+        return self.db.market_own_stats(product, category, 30)
+
+    def _on_market_trade(self, payload: dict) -> None:
+        """Сделка из карточки маркета: пишем её в общий журнал."""
+        try:
+            price = float(payload.get("price") or 0.0)
+            quantity = max(1, int(payload.get("quantity") or 1))
+        except (TypeError, ValueError):
+            return
+        if price <= 0:
+            return
+        product = str(payload.get("product") or "").strip()
+        if not product:
+            return
+
+        amount = price * quantity
+        comment = str(payload.get("comment") or "").strip()
+        if quantity > 1:
+            unit = (
+                f"{quantity} шт. × "
+                f"{format_money(price, self.currency, with_sign=False)}"
+            )
+            comment = f"{comment} · {unit}" if comment else unit
+
+        now = QDateTime.currentDateTime()
+        self.db.add_deal(
+            product=product,
+            side=str(payload.get("side") or "buy"),
+            amount=amount,
+            dealt_at=now.toString(Qt.DateFormat.ISODate),
+            comment=comment,
+            photo=None,
+            created_at=now.toString(Qt.DateFormat.ISODate),
+            category=str(payload.get("category") or "transport"),
+            quantity=quantity,
+        )
+        self.market.notify_trade_saved(payload)
+        word = "Покупка" if payload.get("side") == "buy" else "Продажа"
+        self._toast.show_message(
+            f"{word} внесена в историю: "
+            f"{format_money(amount, self.currency, with_sign=False)}"
+        )
+        self.refresh_history()
 
     # --------------------------------------------------------------------- dates
     def _open_deal_dt_picker(self) -> None:

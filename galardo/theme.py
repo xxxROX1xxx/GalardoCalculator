@@ -454,6 +454,55 @@ QLabel#TableCellStrong { color: #E7E9EC; font-size: 11px; font-weight: 600; }
 QLabel#TableCell[state="up"] { color: #67E396; }
 QLabel#TableCell[state="down"] { color: #FF8D8D; }
 
+/* ------------------------------------------------------------ market trade */
+QFrame#TradeCard {
+    background-color: rgba(255, 255, 255, 5);
+    border: 1px solid rgba(255, 255, 255, 18);
+    border-radius: 12px;
+}
+QPushButton#TradeSide {
+    background-color: transparent;
+    border: 1px solid rgba(255, 255, 255, 26);
+    border-radius: 8px;
+    padding: 6px 18px;
+    color: #B9BEC6;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#TradeSide:hover {
+    background-color: rgba(255, 255, 255, 7);
+    color: #E9EBEE;
+}
+QPushButton#TradeSide:checked {
+    background-color: @ACCENT_SOFT@;
+    border-color: @ACCENT@;
+    color: #FFFFFF;
+}
+QPushButton#TradeQuick {
+    background-color: transparent;
+    border: 1px solid rgba(255, 255, 255, 20);
+    border-radius: 7px;
+    padding: 3px 8px;
+    color: #9BA1AA;
+    font-size: 10px;
+}
+QPushButton#TradeQuick:hover {
+    background-color: rgba(255, 255, 255, 8);
+    color: #E9EBEE;
+}
+QPushButton#TradeQuick:disabled {
+    color: #4E545C;
+    border-color: rgba(255, 255, 255, 10);
+}
+QLabel#TradeSum { color: #F1F3F5; font-size: 16px; font-weight: 700; }
+QLabel#TradeDelta { color: #9BA1AA; font-size: 13px; font-weight: 700; }
+QLabel#TradeDelta[state="good"] { color: #67E396; }
+QLabel#TradeDelta[state="bad"] { color: #FF8D8D; }
+QLabel#TradeVerdict { color: #7B818A; font-size: 10px; }
+QLabel#TradeOwn { color: #6C727B; font-size: 10px; }
+QLabel#TradeSaved { color: #67E396; font-size: 11px; }
+QLabel#TradeSaved[state="error"] { color: #FF9C9C; }
+
 /* ----------------------------------------------------------------- scroll */
 QScrollArea {
     border: none;
@@ -903,6 +952,48 @@ QLabel#TableCell { color: #4B5563; }
 QLabel#TableCellStrong { color: #1B1F24; }
 QLabel#TableCell[state="up"] { color: #1E8E4E; }
 QLabel#TableCell[state="down"] { color: #C0392B; }
+
+/* ------------------------------------------------------------ market trade */
+QFrame#TradeCard {
+    background-color: rgba(0, 0, 0, 3);
+    border: 1px solid rgba(0, 0, 0, 16);
+    border-radius: 12px;
+}
+QPushButton#TradeSide {
+    background-color: transparent;
+    border: 1px solid rgba(0, 0, 0, 26);
+    color: #4B5563;
+}
+QPushButton#TradeSide:hover {
+    background-color: rgba(0, 0, 0, 5);
+    color: #14181D;
+}
+QPushButton#TradeSide:checked {
+    background-color: @ACCENT_SOFT@;
+    border-color: @ACCENT@;
+    color: #14181D;
+}
+QPushButton#TradeQuick {
+    background-color: transparent;
+    border: 1px solid rgba(0, 0, 0, 20);
+    color: #6B7280;
+}
+QPushButton#TradeQuick:hover {
+    background-color: rgba(0, 0, 0, 5);
+    color: #14181D;
+}
+QPushButton#TradeQuick:disabled {
+    color: #B4BAC3;
+    border-color: rgba(0, 0, 0, 10);
+}
+QLabel#TradeSum { color: #14181D; }
+QLabel#TradeDelta { color: #6B7280; }
+QLabel#TradeDelta[state="good"] { color: #1E8E4E; }
+QLabel#TradeDelta[state="bad"] { color: #C0392B; }
+QLabel#TradeVerdict { color: #7A818B; }
+QLabel#TradeOwn { color: #7A818B; }
+QLabel#TradeSaved { color: #1E8E4E; }
+QLabel#TradeSaved[state="error"] { color: #B33A3A; }
 
 QFrame#PopupCard {
     background-color: #FFFFFF;

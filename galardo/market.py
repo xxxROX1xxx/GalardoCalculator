@@ -18,16 +18,27 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QObject,
+    QPointF,
+    QRectF,
+    QRegularExpression,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QFont,
     QImage,
+    QIntValidator,
     QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
     QPixmap,
+    QRegularExpressionValidator,
 )
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -46,7 +57,14 @@ from PySide6.QtWidgets import (
 
 from . import icons, paths, theme
 from .clothing_wiki import WIKI_CLOTHES
-from .widgets import ElidedLabel, format_money, repolish, safe_tooltip
+from .widgets import (
+    AMOUNT_PATTERN,
+    ElidedLabel,
+    format_money,
+    parse_amount,
+    repolish,
+    safe_tooltip,
+)
 
 BASE = "https://m5rp.ru"
 SERVER_ID = "RU15"
@@ -78,6 +96,12 @@ USER_AGENT = (
 
 KIND_LABEL = {"clothes": "Одежда", "items": "Предметы", "vehicles": "Транспорт"}
 KIND_ONE = {"clothes": "Одежда", "items": "Предмет", "vehicles": "Транспорт"}
+# категория сделки в журнале для раздела маркета
+KIND_CATEGORY = {
+    "clothes": "clothing",
+    "items": "items",
+    "vehicles": "transport",
+}
 
 # слоты базовой одежды GTA: у неё нет названий в источнике, но по component
 # видно, что это за вещь — так позиции отличаются друг от друга
@@ -1138,6 +1162,7 @@ class MarketRow(QFrame):
 class MarketDetail(QWidget):
     backRequested = Signal()
     zoomRequested = Signal()
+    tradeRequested = Signal(dict)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1204,6 +1229,7 @@ class MarketDetail(QWidget):
         head_layout.addLayout(titles, 1)
 
         body.addWidget(head)
+        body.addWidget(self._build_trade_card())
 
         # -------------------------------------------------------------- статы
         stats_grid = QGridLayout()
@@ -1308,6 +1334,346 @@ class MarketDetail(QWidget):
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
 
+    # ------------------------------------------------------------------ trade
+    def _build_trade_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("TradeCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(14, 12, 14, 12)
+        box.setSpacing(8)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(10)
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        title = QLabel("Сделка по предмету")
+        title.setObjectName("MarketCardTitle")
+        titles.addWidget(title)
+        sub = QLabel(
+            "Цена, количество и комментарий — можно изменить перед сохранением"
+        )
+        sub.setObjectName("MarketSub")
+        sub.setWordWrap(True)
+        titles.addWidget(sub)
+        top.addLayout(titles, 1)
+
+        self._trade_sum = QLabel("Сумма: —")
+        self._trade_sum.setObjectName("TradeSum")
+        self._trade_sum.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._trade_sum.setToolTip("Итоговая сумма сделки: цена × количество")
+        top.addWidget(self._trade_sum, 0, Qt.AlignmentFlag.AlignTop)
+        box.addLayout(top)
+
+        side_row = QHBoxLayout()
+        side_row.setContentsMargins(0, 0, 0, 0)
+        side_row.setSpacing(6)
+        self._trade_buy = QPushButton("Купил")
+        self._trade_sell = QPushButton("Продал")
+        for button in (self._trade_buy, self._trade_sell):
+            button.setObjectName("TradeSide")
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setFixedHeight(32)
+            button.clicked.connect(self._update_trade_preview)
+            side_row.addWidget(button)
+        self._trade_buy.setChecked(True)
+        side_row.addStretch(1)
+        box.addLayout(side_row)
+
+        fields = QHBoxLayout()
+        fields.setContentsMargins(0, 0, 0, 0)
+        fields.setSpacing(10)
+
+        price_box = QVBoxLayout()
+        price_box.setSpacing(4)
+        price_label = QLabel("Цена за 1 шт.")
+        price_label.setObjectName("StatLabel")
+        price_box.addWidget(price_label)
+        self._trade_price = QLineEdit()
+        self._trade_price.setFixedHeight(38)
+        self._trade_price.setPlaceholderText("Например: 1250")
+        self._trade_price.setValidator(
+            QRegularExpressionValidator(
+                QRegularExpression(AMOUNT_PATTERN), self
+            )
+        )
+        self._trade_price.textChanged.connect(self._update_trade_preview)
+        self._trade_price.returnPressed.connect(self._on_trade_submit)
+        price_box.addWidget(self._trade_price)
+        fields.addLayout(price_box, 1)
+
+        qty_box = QVBoxLayout()
+        qty_box.setSpacing(4)
+        qty_label = QLabel("Кол-во")
+        qty_label.setObjectName("StatLabel")
+        qty_label.setToolTip("Сколько штук куплено или продано")
+        qty_box.addWidget(qty_label)
+        self._trade_qty = QLineEdit("1")
+        self._trade_qty.setFixedHeight(38)
+        self._trade_qty.setFixedWidth(84)
+        self._trade_qty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._trade_qty.setValidator(QIntValidator(1, 9999, self))
+        self._trade_qty.setToolTip("Сколько штук куплено или продано")
+        self._trade_qty.textChanged.connect(self._update_trade_preview)
+        self._trade_qty.returnPressed.connect(self._on_trade_submit)
+        qty_box.addWidget(self._trade_qty)
+        fields.addLayout(qty_box, 0)
+        box.addLayout(fields)
+
+        quick_row = QHBoxLayout()
+        quick_row.setContentsMargins(0, 0, 0, 0)
+        quick_row.setSpacing(5)
+        quick_hint = QLabel("Подставить цену:")
+        quick_hint.setObjectName("StatLabel")
+        quick_row.addWidget(quick_hint)
+        self._trade_quick: dict[str, QPushButton] = {}
+        for key, caption in (
+            ("avg", "Средняя"),
+            ("min", "Мин."),
+            ("max", "Макс."),
+        ):
+            button = QPushButton(caption)
+            button.setObjectName("TradeQuick")
+            button.setFixedHeight(24)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, k=key: self._fill_trade_price(k)
+            )
+            quick_row.addWidget(button)
+            self._trade_quick[key] = button
+        quick_row.addStretch(1)
+        box.addLayout(quick_row)
+
+        self._trade_comment = QLineEdit()
+        self._trade_comment.setFixedHeight(34)
+        self._trade_comment.setPlaceholderText(
+            "Комментарий к сделке (не обязательно)"
+        )
+        self._trade_comment.returnPressed.connect(self._on_trade_submit)
+        box.addWidget(self._trade_comment)
+
+        self._trade_delta = QLabel(
+            "Введите цену — покажу разницу со средней рыночной"
+        )
+        self._trade_delta.setObjectName("TradeDelta")
+        self._trade_delta.setWordWrap(True)
+        box.addWidget(self._trade_delta)
+        self._trade_verdict = QLabel("")
+        self._trade_verdict.setObjectName("TradeVerdict")
+        self._trade_verdict.setWordWrap(True)
+        box.addWidget(self._trade_verdict)
+
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(10)
+        self._trade_own = ElidedLabel("")
+        self._trade_own.setObjectName("TradeOwn")
+        bottom.addWidget(self._trade_own, 1)
+        self._trade_submit = QPushButton("Внести сделку")
+        self._trade_submit.setObjectName("Submit")
+        self._trade_submit.setFixedHeight(38)
+        self._trade_submit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trade_submit.clicked.connect(self._on_trade_submit)
+        bottom.addWidget(self._trade_submit, 0)
+        box.addLayout(bottom)
+
+        self._trade_saved = QLabel("")
+        self._trade_saved.setObjectName("TradeSaved")
+        self._trade_saved.setWordWrap(True)
+        self._trade_saved.hide()
+        box.addWidget(self._trade_saved)
+        return card
+
+    def _trade_side(self) -> str:
+        return "sell" if self._trade_sell.isChecked() else "buy"
+
+    @staticmethod
+    def _number_text(value: float) -> str:
+        if abs(value - round(value)) < 0.005:
+            return str(int(round(value)))
+        return f"{value:.2f}".replace(".", ",")
+
+    def _trade_quantity(self) -> int:
+        try:
+            value = int(self._trade_qty.text().strip())
+        except ValueError:
+            return 1
+        return max(1, min(9999, value))
+
+    def _fill_trade_price(self, key: str) -> None:
+        entry = self._entry
+        if entry is None:
+            return
+        value = {
+            "avg": entry.avg,
+            "min": entry.min,
+            "max": entry.max,
+        }.get(key) or 0.0
+        if value <= 0:
+            return
+        self._trade_price.setText(self._number_text(value))
+        self._trade_price.setFocus()
+        self._trade_price.selectAll()
+
+    def _update_trade_preview(self) -> None:
+        entry = self._entry
+        price = parse_amount(self._trade_price.text())
+        quantity = self._trade_quantity()
+        amount = (price or 0.0) * quantity
+        self._trade_saved.hide()
+        self._trade_sum.setText(
+            f"Сумма: {format_money(amount, CURRENCY, with_sign=False)}"
+            if price
+            else "Сумма: —"
+        )
+
+        if entry is None:
+            return
+
+        for key, value in (
+            ("avg", entry.avg),
+            ("min", entry.min),
+            ("max", entry.max),
+        ):
+            button = self._trade_quick[key]
+            button.setEnabled(value > 0)
+            button.setToolTip(
+                f"Подставить: {money(value)}" if value else "Нет данных"
+            )
+        self._trade_quick["avg"].setText(
+            f"Средняя · {compact(entry.avg)}" if entry.avg else "Средняя"
+        )
+        self._trade_quick["min"].setText(
+            f"Мин. · {compact(entry.min)}" if entry.min else "Мин."
+        )
+        self._trade_quick["max"].setText(
+            f"Макс. · {compact(entry.max)}" if entry.max else "Макс."
+        )
+
+        if price is None:
+            state = "flat"
+            self._trade_delta.setText(
+                "Введите цену — покажу разницу со средней рыночной"
+            )
+            self._trade_verdict.setText(
+                f"Средняя за 30 дней: {money(entry.avg)}" if entry.avg else ""
+            )
+        elif not entry.avg:
+            state = "flat"
+            self._trade_delta.setText(
+                "У источника нет средней цены — сравнивать не с чем"
+            )
+            self._trade_verdict.setText("")
+        else:
+            delta = price - entry.avg
+            percent = delta / entry.avg * 100.0
+            side = self._trade_side()
+            if abs(percent) < 0.5:
+                state = "flat"
+                verdict = "на уровне средней"
+            elif (side == "buy") == (delta < 0):
+                state = "good"
+                verdict = (
+                    "дешевле средней — выгодная покупка"
+                    if side == "buy"
+                    else "дороже средней — выгодная продажа"
+                )
+            else:
+                state = "bad"
+                verdict = (
+                    "дороже средней — переплата"
+                    if side == "buy"
+                    else "дешевле средней — недополучите"
+                )
+            sign = "+" if delta > 0 else "−" if delta < 0 else ""
+            percent_text = f"{abs(percent):.1f}".replace(".", ",")
+            diff_text = format_money(abs(delta), CURRENCY, with_sign=False)
+            self._trade_delta.setText(
+                f"{sign}{percent_text}% от средней · {sign}{diff_text}"
+            )
+            self._trade_verdict.setText(
+                f"{verdict.capitalize()} · средняя за 30 дней {money(entry.avg)}"
+            )
+
+        self._trade_delta.setProperty("state", state)
+        repolish(self._trade_delta)
+
+    def _on_trade_submit(self) -> None:
+        entry = self._entry
+        if entry is None:
+            return
+        price = parse_amount(self._trade_price.text())
+        if price is None:
+            self._trade_price.setProperty("error", True)
+            repolish(self._trade_price)
+            self._trade_saved.setText("Укажите цену за 1 шт.")
+            self._trade_saved.setProperty("state", "error")
+            repolish(self._trade_saved)
+            self._trade_saved.show()
+            self._trade_price.setFocus()
+            return
+
+        self._trade_price.setProperty("error", False)
+        repolish(self._trade_price)
+        quantity = self._trade_quantity()
+        if self._trade_qty.text().strip() != str(quantity):
+            self._trade_qty.setText(str(quantity))
+        payload = {
+            "product": entry.name,
+            "kind": entry.kind,
+            "key": entry.key,
+            "side": self._trade_side(),
+            "price": price,
+            "quantity": quantity,
+            "amount": price * quantity,
+            "comment": self._trade_comment.text().strip(),
+            "category": KIND_CATEGORY.get(entry.kind, "transport"),
+        }
+        self.tradeRequested.emit(payload)
+        self._trade_comment.clear()
+
+    def set_trade_saved(self, payload: dict) -> None:
+        side = str(payload.get("side") or "buy")
+        quantity = max(1, int(payload.get("quantity") or 1))
+        price = float(payload.get("price") or 0.0)
+        amount = float(payload.get("amount") or 0.0)
+        word = "купил" if side == "buy" else "продал"
+        price_text = (
+            f"{quantity} шт. × {money(price)}"
+            if quantity > 1
+            else money(price)
+        )
+        self._trade_saved.setText(
+            f"Внесено в историю: {word} {price_text} · "
+            f"{format_money(amount, CURRENCY, with_sign=False)}"
+        )
+        self._trade_saved.setProperty("state", "ok")
+        repolish(self._trade_saved)
+        self._trade_saved.show()
+
+    def set_own_stats(
+        self,
+        buy_count: int,
+        buy_average: float | None,
+        sell_count: int,
+        sell_average: float | None,
+    ) -> None:
+        parts: list[str] = []
+        if buy_count:
+            parts.append(f"покупки: {buy_count} × {money(buy_average or 0)}")
+        if sell_count:
+            parts.append(f"продажи: {sell_count} × {money(sell_average or 0)}")
+        text = (
+            "Мои сделки за 30 дней — " + " · ".join(parts)
+            if parts
+            else "Моих сделок с этим предметом пока нет"
+        )
+        self._trade_own.set_full_text(text)
+
     # ------------------------------------------------------------------- data
     def set_entry(self, entry: MarketEntry) -> None:
         self._entry = entry
@@ -1337,6 +1703,14 @@ class MarketDetail(QWidget):
         self.chart.set_message("Загружаем историю…")
         self._clear_table()
         self._table_note("")
+        self._trade_price.setProperty("error", False)
+        repolish(self._trade_price)
+        self._trade_price.clear()
+        self._trade_comment.clear()
+        self._trade_saved.hide()
+        self._trade_saved.setProperty("state", "ok")
+        self._trade_own.set_full_text("")
+        self._update_trade_preview()
 
     def set_image(self, image: QImage) -> None:
         if image.isNull():
@@ -1470,10 +1844,12 @@ class MarketPanel(QWidget):
     """Вкладка «Маркет»: поиск по каталогу и карточка предмета с графиком."""
 
     imageRequested = Signal(QImage, str)
+    tradeRequested = Signal(dict)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.service = MarketService(self)
+        self.stats_provider = None
         self._entries: list[MarketEntry] = []
         self._meta: dict = {}
         self._kind = "clothes"
@@ -1560,6 +1936,7 @@ class MarketPanel(QWidget):
         self.detail = MarketDetail()
         self.detail.backRequested.connect(self._show_list)
         self.detail.zoomRequested.connect(self._zoom_current)
+        self.detail.tradeRequested.connect(self.tradeRequested.emit)
         self.stack.addWidget(self.detail)
         root.addWidget(self.stack, 1)
 
@@ -1762,6 +2139,7 @@ class MarketPanel(QWidget):
         self._search_timer.stop()
         self._current = entry
         self.detail.set_entry(entry)
+        self._refresh_own_stats()
         self.stack.setCurrentWidget(self.detail)
         self._load_image(entry.image, self.detail.set_image, entry.image_alt)
 
@@ -1798,6 +2176,27 @@ class MarketPanel(QWidget):
         entry = self._current
         if entry is not None:
             self._zoom_entry(entry)
+
+    # ------------------------------------------------------------------- trade
+    def set_stats_provider(self, provider) -> None:
+        """Callback ``(product, kind) -> (buy_count, buy_avg, sell_count, sell_avg)``."""
+        self.stats_provider = provider
+
+    def _refresh_own_stats(self) -> None:
+        entry = self._current
+        if entry is None or self.stats_provider is None:
+            return
+        try:
+            data = self.stats_provider(entry.name, entry.kind)
+        except Exception:  # noqa: BLE001
+            return
+        if entry is not self._current:
+            return
+        self.detail.set_own_stats(*data)
+
+    def notify_trade_saved(self, payload: dict) -> None:
+        self.detail.set_trade_saved(payload)
+        self._refresh_own_stats()
 
     def _show_list(self) -> None:
         self._current = None

@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS deals (
     side        TEXT    NOT NULL CHECK (side IN ('buy', 'sell')),
     amount      REAL    NOT NULL,
     quantity    REAL    NOT NULL DEFAULT 1,
+    parent_id   INTEGER,
+    sort_key    REAL    NOT NULL DEFAULT 0,
     dealt_at    TEXT    NOT NULL,
     comment     TEXT    NOT NULL DEFAULT '',
     photo       BLOB,
@@ -51,6 +53,8 @@ class Deal:
     created_at: str
     category: str = "transport"
     quantity: float = 1.0
+    parent_id: int | None = None
+    sort_key: float = 0.0
 
     @property
     def signed_amount(self) -> float:
@@ -155,10 +159,30 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE deals ADD COLUMN quantity REAL NOT NULL DEFAULT 1"
             )
+        if "parent_id" not in columns:
+            self._conn.execute("ALTER TABLE deals ADD COLUMN parent_id INTEGER")
+        if "sort_key" not in columns:
+            self._conn.execute("ALTER TABLE deals ADD COLUMN sort_key REAL")
+            self._renumber_sort_keys()
         self._conn.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS idx_deals_legacy_id
                ON deals (legacy_id)"""
         )
+
+    def _renumber_sort_keys(self) -> None:
+        """Разложить существующие сделки по текущему порядку дат.
+
+        Вызывается только при первом появлении колонки sort_key и после
+        импорта старой истории — дальше порядок задаёт пользователь.
+        """
+        rows = self._conn.execute(
+            "SELECT id FROM deals ORDER BY dealt_at DESC, id DESC"
+        ).fetchall()
+        self._conn.executemany(
+            "UPDATE deals SET sort_key = ? WHERE id = ?",
+            [(float(index), int(row["id"])) for index, row in enumerate(rows)],
+        )
+        self._conn.commit()
 
     # ---------------------------------------------------------- legacy import
     def _deal_count(self) -> int:
@@ -257,6 +281,8 @@ class Database:
         self._conn.commit()
         inserted = self._deal_count() - before
         self.legacy_imported += inserted
+        if inserted:
+            self._renumber_sort_keys()
         return inserted
 
     # ------------------------------------------------------------------ deals
@@ -272,17 +298,21 @@ class Database:
         created_at: str,
         category: str = "transport",
         quantity: float = 1.0,
+        parent_id: int | None = None,
     ) -> int:
+        sort_key = self._next_sort_key()
         cur = self._conn.execute(
             """INSERT INTO deals
-               (product, side, amount, quantity, dealt_at, comment, photo,
-                created_at, category)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (product, side, amount, quantity, parent_id, sort_key,
+                dealt_at, comment, photo, created_at, category)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 product,
                 side,
                 amount,
                 max(1.0, float(quantity)),
+                parent_id,
+                sort_key,
                 dealt_at,
                 comment,
                 photo,
@@ -290,8 +320,21 @@ class Database:
                 category,
             ),
         )
+        # новая продажа «такого же» товара поднимает всю пару наверх
+        if parent_id is not None:
+            self._conn.execute(
+                "UPDATE deals SET sort_key = ? WHERE id = ?",
+                (sort_key, parent_id),
+            )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def _next_sort_key(self) -> float:
+        row = self._conn.execute(
+            "SELECT MIN(sort_key) AS first FROM deals"
+        ).fetchone()
+        first = row["first"] if row is not None else None
+        return (float(first) - 1.0) if first is not None else 0.0
 
     def update_deal(
         self,
@@ -324,10 +367,33 @@ class Database:
                 deal_id,
             ),
         )
+        if side == "buy":
+            # покупка не может быть чьей-то продажей
+            self._conn.execute(
+                "UPDATE deals SET parent_id = NULL WHERE id = ?", (deal_id,)
+            )
+        else:
+            # если покупку переделали в продажу, её «дети» становятся сами по себе
+            self._conn.execute(
+                "UPDATE deals SET parent_id = NULL WHERE parent_id = ?",
+                (deal_id,),
+            )
         self._conn.commit()
 
     def delete_deal(self, deal_id: int) -> None:
+        self._conn.execute(
+            "UPDATE deals SET parent_id = NULL WHERE parent_id = ?", (deal_id,)
+        )
         self._conn.execute("DELETE FROM deals WHERE id = ?", (deal_id,))
+        self._conn.commit()
+
+    def set_sort_keys(self, keys: dict[int, float]) -> None:
+        if not keys:
+            return
+        self._conn.executemany(
+            "UPDATE deals SET sort_key = ? WHERE id = ?",
+            [(float(value), int(deal_id)) for deal_id, value in keys.items()],
+        )
         self._conn.commit()
 
     def set_deal_photo(self, deal_id: int, photo: bytes | None) -> None:
@@ -335,6 +401,14 @@ class Database:
             "UPDATE deals SET photo = ? WHERE id = ?", (photo, deal_id)
         )
         self._conn.commit()
+
+    def linked_sales(self, deal_id: int) -> int:
+        """Сколько продаж уже привязано к этой покупке."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS count FROM deals WHERE parent_id = ?",
+            (deal_id,),
+        ).fetchone()
+        return int((row["count"] if row is not None else 0) or 0)
 
     def get_deal(self, deal_id: int) -> Deal | None:
         row = self._conn.execute(
@@ -350,7 +424,7 @@ class Database:
         if category:
             sql += " WHERE category = ?"
             params = (category,)
-        sql += " ORDER BY dealt_at DESC, id DESC"
+        sql += " ORDER BY sort_key ASC, dealt_at DESC, id DESC"
         rows = self._conn.execute(sql, params).fetchall()
         deals = [self._row_to_deal(row) for row in rows]
         if query:
@@ -533,4 +607,8 @@ class Database:
             created_at=str(row["created_at"]),
             category=str(row["category"]),
             quantity=float(row["quantity"] or 1.0),
+            parent_id=(
+                int(row["parent_id"]) if row["parent_id"] is not None else None
+            ),
+            sort_key=float(row["sort_key"] or 0.0),
         )

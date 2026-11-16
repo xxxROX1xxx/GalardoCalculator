@@ -84,6 +84,50 @@ QLabel#WeekAmount {
     font-size: 12px;
     font-weight: 600;
 }
+QLabel#DragHandle {
+    background-color: transparent;
+    border-radius: 4px;
+}
+QLabel#DragHandle:hover {
+    background-color: rgba(255, 255, 255, 14);
+}
+QFrame#PairHeader {
+    background-color: rgba(255, 255, 255, 6);
+    border: 1px solid rgba(255, 255, 255, 18);
+    border-radius: 8px;
+}
+QFrame#PairHeader:hover {
+    background-color: rgba(255, 255, 255, 11);
+}
+QLabel#PairChevron {
+    color: #8C929A;
+    font-size: 11px;
+}
+QLabel#PairTitle {
+    color: #F1F3F5;
+    font-size: 13px;
+    font-weight: 600;
+}
+QLabel#PairMeta {
+    color: #8A9099;
+    font-size: 11px;
+}
+QLabel#PairProfit {
+    color: #A6ABB3;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel#PairProfit[state="positive"] {
+    color: #67E396;
+}
+QLabel#PairProfit[state="negative"] {
+    color: #FF8D8D;
+}
+QFrame#DropLine {
+    background-color: @ACCENT@;
+    border: none;
+    border-radius: 1px;
+}
 QLabel#DealTitle {
     color: #F1F3F5;
     font-size: 14px;
@@ -747,6 +791,18 @@ QLabel#WeekChevron { color: #6B7280; }
 QLabel#WeekTitle { color: #33383F; }
 QLabel#WeekMeta { color: #7A818B; }
 QLabel#WeekAmount { color: #4B5563; }
+QLabel#DragHandle:hover { background-color: rgba(0, 0, 0, 8); }
+QFrame#PairHeader {
+    background-color: rgba(0, 0, 0, 4);
+    border: 1px solid rgba(0, 0, 0, 14);
+}
+QFrame#PairHeader:hover { background-color: rgba(0, 0, 0, 7); }
+QLabel#PairChevron { color: #6B7280; }
+QLabel#PairTitle { color: #1B1F24; }
+QLabel#PairMeta { color: #7A818B; }
+QLabel#PairProfit { color: #4B5563; }
+QLabel#PairProfit[state="positive"] { color: #1E8E4E; }
+QLabel#PairProfit[state="negative"] { color: #C0392B; }
 QLabel#DealTitle { color: #1B1F24; }
 QLabel#DealDate { color: #7A818B; }
 QLabel#DealComment { color: #4B5563; }

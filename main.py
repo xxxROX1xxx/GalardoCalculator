@@ -46,7 +46,7 @@ def _seed_demo(db) -> None:
     )
     painter.end()
 
-    db.add_deal(
+    vivo_id = db.add_deal(
         product="Truffade Vivo",
         side="buy",
         amount=3253525,
@@ -56,15 +56,35 @@ def _seed_demo(db) -> None:
         created_at=now.toString(Qt.DateFormat.ISODate),
     )
     db.add_deal(
+        product="Truffade Vivo",
+        side="sell",
+        amount=4120000,
+        dealt_at=now.addSecs(-600).toString(Qt.DateFormat.ISODate),
+        comment="Ушла за полчаса",
+        photo=None,
+        created_at=now.toString(Qt.DateFormat.ISODate),
+        parent_id=vivo_id,
+    )
+    ztype_id = db.add_deal(
+        product="Truffade Z-Type",
+        side="buy",
+        amount=1080000,
+        dealt_at=now.addDays(-1).toString(Qt.DateFormat.ISODate),
+        comment="Забрал у продавца",
+        photo=None,
+        created_at=now.toString(Qt.DateFormat.ISODate),
+    )
+    db.add_deal(
         product="Truffade Z-Type",
         side="sell",
-        amount=125325,
+        amount=1253250,
         dealt_at=now.addSecs(-7200).toString(Qt.DateFormat.ISODate),
         comment="Покупатель забрал в тот же день",
         photo=image_to_jpeg(sample_photo),
         created_at=now.toString(Qt.DateFormat.ISODate),
+        parent_id=ztype_id,
     )
-    db.add_deal(
+    specter_id = db.add_deal(
         product="Dewbauchee Specter",
         side="buy",
         amount=155316,
@@ -72,6 +92,16 @@ def _seed_demo(db) -> None:
         comment="",
         photo=None,
         created_at=now.toString(Qt.DateFormat.ISODate),
+    )
+    db.add_deal(
+        product="Dewbauchee Specter",
+        side="sell",
+        amount=172000,
+        dealt_at=now.addDays(-1).addSecs(5400).toString(Qt.DateFormat.ISODate),
+        comment="",
+        photo=None,
+        created_at=now.toString(Qt.DateFormat.ISODate),
+        parent_id=specter_id,
     )
     db.add_deal(
         product="Куртка Bigness",

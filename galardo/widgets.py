@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from pathlib import Path
 
@@ -10,7 +11,9 @@ from PySide6.QtCore import (
     QDate,
     QDateTime,
     QEasingCurve,
+    QEvent,
     QIODevice,
+    QMimeData,
     QPoint,
     QPropertyAnimation,
     QRectF,
@@ -22,6 +25,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QDrag,
     QImage,
     QIntValidator,
     QKeySequence,
@@ -55,6 +59,7 @@ from .db import Deal
 
 # --------------------------------------------------------------------------- helpers
 AMOUNT_PATTERN = r"^\d{0,12}([.,]\d{0,2})?$"
+DEAL_DRAG_MIME = "application/x-galardo-deal"
 
 
 def format_money(value: float, currency: str, with_sign: bool = True) -> str:
@@ -849,6 +854,71 @@ class PhotoDrop(QFrame):
 
 
 # -------------------------------------------------------------------------- deal card
+class DragHandle(QLabel):
+    """Точка захвата: тянет карточку или всю пару «покупка + продажа»."""
+
+    def __init__(
+        self,
+        deal_ids: list[int],
+        week: int,
+        source: QWidget,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._ids = list(deal_ids)
+        self._week = week
+        self._source = source
+        self._press: QPoint | None = None
+        self.setObjectName("DragHandle")
+        self.setFixedSize(16, 24)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setToolTip("Перетащить выше или ниже")
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.position().toPoint()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._press is None or not (event.buttons() & Qt.MouseButton.LeftButton):
+            return super().mouseMoveEvent(event)
+        distance = (event.position().toPoint() - self._press).manhattanLength()
+        if distance < QApplication.startDragDistance():
+            return
+
+        self._press = None
+        payload = json.dumps({"ids": self._ids, "week": self._week})
+        mime = QMimeData()
+        mime.setData(DEAL_DRAG_MIME, QByteArray(payload.encode("utf-8")))
+
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        pixmap = self._source.grab()
+        if pixmap.width() > 420:
+            pixmap = pixmap.scaledToWidth(
+                420, Qt.TransformationMode.SmoothTransformation
+            )
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(14, min(20, pixmap.height() // 2)))
+        self.window().setCursor(Qt.CursorShape.ClosedHandCursor)
+        drag.exec(Qt.DropAction.MoveAction)
+        self.window().unsetCursor()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.icon_tone("muted")))
+        radius = 1.4
+        for row in range(3):
+            for column in range(2):
+                x = self.width() / 2 + (column - 0.5) * 6
+                y = self.height() / 2 + (row - 1) * 6
+                painter.drawEllipse(QRectF(x - radius, y - radius, radius * 2, radius * 2))
+
+
 class DealCard(QFrame):
     editRequested = Signal(int)
     deleteRequested = Signal(int)
@@ -862,6 +932,7 @@ class DealCard(QFrame):
         self.setObjectName("DealCard")
         self.setProperty("side", deal.side)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self._drag_handle: DragHandle | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -869,6 +940,7 @@ class DealCard(QFrame):
 
         header = QHBoxLayout()
         header.setSpacing(6)
+        self._header_layout = header
         title = ElidedLabel(deal.product)
         title.setObjectName("DealTitle")
         title.setMinimumWidth(80)
@@ -944,15 +1016,24 @@ class DealCard(QFrame):
             comment.setToolTip(safe_tooltip(deal.comment))
             layout.addWidget(comment)
 
+    def enable_drag(self, deal_ids: list[int], week: int) -> None:
+        if self._drag_handle is not None:
+            return
+        self._drag_handle = DragHandle(deal_ids, week, self)
+        self._header_layout.insertWidget(0, self._drag_handle)
+
     def refresh_icons(self) -> None:
         tone = theme.icon_tone("muted")
         self._edit_button.setIcon(icons.icon("pencil", tone))
         self._delete_button.setIcon(icons.icon("trash", tone))
+        if self._drag_handle is not None:
+            self._drag_handle.update()
 
 
 # ------------------------------------------------------------------------- week group
 class WeekSection(QWidget):
     toggled = Signal(bool)
+    dealDropped = Signal(object, int)
 
     def __init__(
         self,
@@ -963,10 +1044,14 @@ class WeekSection(QWidget):
         total: float,
         currency: str,
         expanded: bool,
+        week: int = 0,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._expanded = expanded
+        self._week = week
+        self._drop_ids: list[int] | None = None
+        self._drop_index = 0
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1002,11 +1087,21 @@ class WeekSection(QWidget):
 
         self.body = QWidget()
         self.body.setObjectName("WeekBody")
+        self.body.setAcceptDrops(True)
+        self.body.installEventFilter(self)
         self.body_layout = QVBoxLayout(self.body)
         self.body_layout.setContentsMargins(0, 0, 0, 0)
         self.body_layout.setSpacing(9)
         self.body.setVisible(expanded)
         outer.addWidget(self.body)
+
+        self._drop_line = QFrame(self.body)
+        self._drop_line.setObjectName("DropLine")
+        self._drop_line.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._drop_line.setFixedHeight(2)
+        self._drop_line.hide()
 
         self._header.clicked.connect(self._toggle)
 
@@ -1017,7 +1112,7 @@ class WeekSection(QWidget):
         for index in range(self.body_layout.count()):
             item = self.body_layout.itemAt(index)
             widget = item.widget() if item is not None else None
-            if isinstance(widget, DealCard):
+            if isinstance(widget, (DealCard, PairSection)):
                 widget.refresh_icons()
 
     def _toggle(self) -> None:
@@ -1025,6 +1120,214 @@ class WeekSection(QWidget):
         self.body.setVisible(self._expanded)
         self._chevron.setText("▾" if self._expanded else "▸")
         self.toggled.emit(self._expanded)
+
+    # ------------------------------------------------------------- drag & drop
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.body:
+            kind = event.type()
+            if kind in (
+                QEvent.Type.DragEnter,
+                QEvent.Type.DragMove,
+            ):
+                payload = self._drag_payload(event.mimeData())
+                if payload is None:
+                    event.ignore()
+                    return True
+                self._drop_ids = payload["ids"]
+                self._drop_index, line_y = self._drop_position(
+                    event.position().toPoint()
+                )
+                self._show_drop_line(line_y)
+                event.acceptProposedAction()
+                return True
+            if kind == QEvent.Type.DragLeave:
+                self._hide_drop_line()
+                event.accept()
+                return True
+            if kind == QEvent.Type.Drop:
+                payload = self._drag_payload(event.mimeData())
+                self._hide_drop_line()
+                if payload is None:
+                    event.ignore()
+                    return True
+                self.dealDropped.emit(payload["ids"], self._drop_index)
+                event.acceptProposedAction()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _drag_payload(self, mime) -> dict | None:
+        if mime is None or not mime.hasFormat(DEAL_DRAG_MIME):
+            return None
+        try:
+            payload = json.loads(
+                bytes(mime.data(DEAL_DRAG_MIME)).decode("utf-8")
+            )
+        except (ValueError, UnicodeDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("week") != self._week:
+            return None
+        ids = payload.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return None
+        return {"ids": [int(value) for value in ids]}
+
+    def _drop_position(self, pos: QPoint) -> tuple[int, int]:
+        """Индекс вставки и Y линии-подсказки (с учётом перетаскиваемого)."""
+        widgets: list[QWidget] = []
+        for index in range(self.body_layout.count()):
+            item = self.body_layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is not None and widget is not self._drop_line:
+                widgets.append(widget)
+        source = None
+        for widget in widgets:
+            if getattr(widget, "entry_ids", None) == self._drop_ids:
+                source = widget
+                break
+        others = [widget for widget in widgets if widget is not source]
+        if not others:
+            return 0, 0
+
+        index = 0
+        for widget in others:
+            if pos.y() < widget.geometry().center().y():
+                break
+            index += 1
+        if index == 0:
+            y = others[0].geometry().top()
+        elif index == len(others):
+            y = others[-1].geometry().bottom() + 1
+        else:
+            y = (others[index - 1].geometry().bottom() + others[index].geometry().top()) // 2
+        y = max(0, min(y, max(0, self.body.height() - 2)))
+        return index, y
+
+    def _show_drop_line(self, y: int) -> None:
+        self._drop_line.setGeometry(0, y, max(0, self.body.width()), 2)
+        self._drop_line.show()
+        self._drop_line.raise_()
+
+    def _hide_drop_line(self) -> None:
+        self._drop_line.hide()
+        self._drop_ids = None
+
+
+# ------------------------------------------------------------------------- pair group
+class PairSection(QWidget):
+    """Свёрнутая пара «покупка + продажа» одного предмета."""
+
+    toggled = Signal(bool)
+    statsRequested = Signal(int)
+
+    def __init__(
+        self,
+        deal: Deal,
+        children: list[Deal],
+        currency: str,
+        expanded: bool,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._expanded = expanded
+        self._drag_handle: DragHandle | None = None
+        self._header_layout: QHBoxLayout | None = None
+        members = [deal] + list(children)
+        total = sum(item.signed_amount for item in members)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(7)
+
+        self._header = ClickableFrame()
+        self._header.setObjectName("PairHeader")
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header = QHBoxLayout(self._header)
+        header.setContentsMargins(9, 7, 12, 7)
+        header.setSpacing(8)
+        self._header_layout = header
+
+        self._chevron = QLabel("▾" if expanded else "▸")
+        self._chevron.setObjectName("PairChevron")
+        self._chevron.setFixedWidth(12)
+        header.addWidget(self._chevron)
+
+        title = ElidedLabel(deal.product)
+        title.setObjectName("PairTitle")
+        title.setMinimumWidth(80)
+        title.setCursor(Qt.CursorShape.PointingHandCursor)
+        title.setToolTip(
+            safe_tooltip(f"{deal.product} · статистика за 30 дней")
+        )
+        title.clicked.connect(lambda: self.statsRequested.emit(deal.id))
+        header.addWidget(title, 1)
+
+        if len(children) == 1:
+            meta_text = (
+                f"Купил {format_money(deal.amount, currency, with_sign=False)}"
+                f" · Продал "
+                f"{format_money(children[0].amount, currency, with_sign=False)}"
+            )
+        else:
+            meta_text = f"Покупка и {len(children)} {_sales_word(len(children))}"
+        meta = QLabel(meta_text)
+        meta.setObjectName("PairMeta")
+        header.addWidget(meta)
+
+        profit = QLabel(format_money(total, currency))
+        profit.setObjectName("PairProfit")
+        profit.setProperty(
+            "state", "positive" if total > 0.004 else "negative" if total < -0.004 else ""
+        )
+        header.addWidget(profit)
+        outer.addWidget(self._header)
+
+        self.body = QWidget()
+        self.body.setObjectName("PairBody")
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(20, 0, 0, 0)
+        self.body_layout.setSpacing(7)
+        self.body.setVisible(expanded)
+        outer.addWidget(self.body)
+
+        self._header.clicked.connect(self._toggle)
+
+    def add_card(self, card: QWidget) -> None:
+        self.body_layout.addWidget(card)
+
+    def enable_drag(self, deal_ids: list[int], week: int) -> None:
+        if self._drag_handle is not None or self._header_layout is None:
+            return
+        self._drag_handle = DragHandle(deal_ids, week, self._header)
+        self._header_layout.insertWidget(1, self._drag_handle)
+
+    def refresh_icons(self) -> None:
+        for index in range(self.body_layout.count()):
+            item = self.body_layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if isinstance(widget, DealCard):
+                widget.refresh_icons()
+        if self._drag_handle is not None:
+            self._drag_handle.update()
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self.body.setVisible(self._expanded)
+        self._chevron.setText("▾" if self._expanded else "▸")
+        self.toggled.emit(self._expanded)
+
+
+def _sales_word(count: int) -> str:
+    count = abs(count) % 100
+    last = count % 10
+    if 11 <= count <= 14:
+        return "продаж"
+    if last == 1:
+        return "продажа"
+    if 2 <= last <= 4:
+        return "продажи"
+    return "продаж"
 
 
 # ------------------------------------------------------------------------- title bar

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import (
     QDate,
     QDateTime,
@@ -51,6 +53,7 @@ from .widgets import (
     DateTimePopup,
     DealCard,
     ImageOverlay,
+    PairSection,
     PhotoDrop,
     ResizeGrip,
     SettingsPopup,
@@ -68,6 +71,27 @@ def amount_to_text(value: float) -> str:
     if abs(value - round(value)) < 0.005:
         return str(int(round(value)))
     return f"{value:.2f}".replace(".", ",")
+
+
+@dataclass
+class HistoryEntry:
+    """Строка истории: одиночная сделка или пара «покупка + продажи»."""
+
+    deal: Deal
+    children: list[Deal]
+    week: int = 0
+
+    @property
+    def members(self) -> list[Deal]:
+        return [self.deal, *self.children]
+
+    @property
+    def ids(self) -> list[int]:
+        return [member.id for member in self.members]
+
+    @property
+    def total(self) -> float:
+        return sum(member.signed_amount for member in self.members)
 
 
 class MainWindow(QWidget):
@@ -94,6 +118,10 @@ class MainWindow(QWidget):
         self._quick_filled = False
         self._active_tab = "all"
         self._week_expanded: dict[tuple[str, int], bool] = {}
+        self._pair_expanded: dict[tuple[str, int], bool] = {}
+        self._week_entries: dict[int, list[HistoryEntry]] = {}
+        self._pending_parent_id: int | None = None
+        self._pending_product = ""
         self._deal_dt = QDateTime.currentDateTime()
 
         self.setWindowTitle("Galardo")
@@ -473,32 +501,11 @@ class MainWindow(QWidget):
         self.view_stack.setCurrentWidget(self.history_page)
         self.refresh_history()
 
-    def _week_groups(
-        self, deals: list[Deal]
-    ) -> tuple[QDateTime, dict[int, list[Deal]]]:
-        anchor = QDateTime.fromString(
-            self.db.first_dealt_at() or "", Qt.DateFormat.ISODate
-        )
-        if not anchor.isValid() and deals:
-            anchor = QDateTime.fromString(
-                deals[-1].dealt_at, Qt.DateFormat.ISODate
-            )
-        if not anchor.isValid():
-            anchor = QDateTime.currentDateTime()
-
-        groups: dict[int, list[Deal]] = {}
-        for deal in deals:
-            moment = QDateTime.fromString(
-                deal.dealt_at, Qt.DateFormat.ISODate
-            )
-            if not moment.isValid():
-                moment = anchor
-            week = int(anchor.secsTo(moment) // (7 * 86400))
-            groups.setdefault(week, []).append(deal)
-        return anchor, groups
-
     def _remember_week(self, week: int, expanded: bool) -> None:
         self._week_expanded[(self._active_tab, week)] = expanded
+
+    def _remember_pair(self, deal_id: int, expanded: bool) -> None:
+        self._pair_expanded[(self._active_tab, deal_id)] = expanded
 
     def refresh_history(self) -> None:
         if getattr(self, "_active_tab", "all") == "market":
@@ -508,16 +515,22 @@ class MainWindow(QWidget):
         deals = self.db.all_deals(query, category)
 
         self._clear_history()
+        self._week_entries = {}
 
         if not deals:
             self.history_layout.addStretch(1)
             self.history_layout.addWidget(self._make_empty_state(bool(query)))
             self.history_layout.addStretch(2)
         else:
-            anchor, groups = self._week_groups(deals)
-            newest = max(groups)
-            for week in sorted(groups, reverse=True):
-                group = groups[week]
+            anchor = self._history_anchor(deals)
+            entries = self._history_entries(deals, anchor)
+            weeks: dict[int, list[HistoryEntry]] = {}
+            for entry in entries:
+                weeks.setdefault(entry.week, []).append(entry)
+            self._week_entries = weeks
+            newest = max(weeks)
+            for week in sorted(weeks, reverse=True):
+                group = weeks[week]
                 start = anchor.addDays(week * 7)
                 end = start.addDays(6)
                 expanded = self._week_expanded.get(
@@ -527,20 +540,28 @@ class MainWindow(QWidget):
                     week + 1,
                     start.date(),
                     end.date(),
-                    len(group),
-                    sum(deal.signed_amount for deal in group),
+                    sum(len(entry.members) for entry in group),
+                    sum(entry.total for entry in group),
                     self.currency,
                     expanded,
+                    week,
                 )
-                for deal in group:
-                    card = DealCard(deal, self.currency)
-                    card.editRequested.connect(self._load_deal_for_edit)
-                    card.deleteRequested.connect(self._confirm_delete)
-                    card.quickRequested.connect(self._quick_add)
-                    card.photoRequested.connect(self._show_photo)
-                    section.add_card(card)
+                for entry in group:
+                    if entry.children:
+                        widget = self._make_pair_section(entry, week)
+                    else:
+                        card = self._make_deal_card(entry.deal)
+                        card.enable_drag(entry.ids, week)
+                        card.entry_ids = entry.ids
+                        widget = card
+                    section.add_card(widget)
                 section.toggled.connect(
                     lambda state, index=week: self._remember_week(index, state)
+                )
+                section.dealDropped.connect(
+                    lambda ids, index, number=week: self._on_deal_dropped(
+                        number, ids, index
+                    )
                 )
                 self.history_layout.addWidget(section)
             self.history_layout.addStretch(1)
@@ -549,6 +570,145 @@ class MainWindow(QWidget):
         self._update_total(total, bool(query))
         self.count_label.setText(f"{len(deals)} {deals_word(len(deals))}")
         QTimer.singleShot(0, self._scroll_to_top)
+
+    def _make_deal_card(self, deal: Deal) -> DealCard:
+        card = DealCard(deal, self.currency)
+        card.editRequested.connect(self._load_deal_for_edit)
+        card.deleteRequested.connect(self._confirm_delete)
+        card.quickRequested.connect(self._quick_add)
+        card.photoRequested.connect(self._show_photo)
+        return card
+
+    def _make_pair_section(self, entry: HistoryEntry, week: int) -> PairSection:
+        expanded = self._pair_expanded.get(
+            (self._active_tab, entry.deal.id), True
+        )
+        pair = PairSection(entry.deal, entry.children, self.currency, expanded)
+        pair.entry_ids = entry.ids
+        for member in entry.members:
+            pair.add_card(self._make_deal_card(member))
+        pair.enable_drag(entry.ids, week)
+        pair.toggled.connect(
+            lambda state, deal_id=entry.deal.id: self._remember_pair(
+                deal_id, state
+            )
+        )
+        return pair
+
+    def _history_anchor(self, deals: list[Deal]) -> QDateTime:
+        anchor = QDateTime.fromString(
+            self.db.first_dealt_at() or "", Qt.DateFormat.ISODate
+        )
+        if not anchor.isValid() and deals:
+            anchor = QDateTime.fromString(
+                deals[-1].dealt_at, Qt.DateFormat.ISODate
+            )
+        if not anchor.isValid():
+            anchor = QDateTime.currentDateTime()
+        return anchor
+
+    def _week_index(self, anchor: QDateTime, deal: Deal) -> int:
+        moment = QDateTime.fromString(deal.dealt_at, Qt.DateFormat.ISODate)
+        if not moment.isValid():
+            moment = anchor
+        return int(anchor.secsTo(moment) // (7 * 86400))
+
+    def _history_entries(
+        self, deals: list[Deal], anchor: QDateTime
+    ) -> list[HistoryEntry]:
+        """Разложить сделки на строки: пары только по явной связи parent_id."""
+        by_id = {deal.id: deal for deal in deals}
+        children: dict[int, list[Deal]] = {}
+        for deal in deals:
+            parent_id = deal.parent_id
+            if parent_id is None or parent_id == deal.id or parent_id not in by_id:
+                continue
+            children.setdefault(parent_id, []).append(deal)
+
+        entries: list[HistoryEntry] = []
+        used: set[int] = set()
+        for deal in deals:
+            if deal.id in used:
+                continue
+            parent_id = deal.parent_id
+            if parent_id in by_id and parent_id != deal.id:
+                # продажа показывается внутри своей покупки
+                continue
+            group = self._descendants(deal, children, used)
+            used.add(deal.id)
+            entry = HistoryEntry(deal=deal, children=group)
+            entry.week = max(
+                self._week_index(anchor, member) for member in entry.members
+            )
+            entries.append(entry)
+        return entries
+
+    def _descendants(
+        self, deal: Deal, children: dict[int, list[Deal]], used: set[int]
+    ) -> list[Deal]:
+        result: list[Deal] = []
+        for child in children.get(deal.id, []):
+            if child.id in used:
+                continue
+            used.add(child.id)
+            result.append(child)
+            result.extend(self._descendants(child, children, used))
+        return result
+
+    def _on_deal_dropped(self, week: int, ids: list[int], index: int) -> None:
+        """Перетащили строку внутри недели: запоминаем новый порядок."""
+        visible = self._week_entries.get(week)
+        if not visible:
+            return
+        dragged = next((entry for entry in visible if entry.ids == ids), None)
+        if dragged is None:
+            return
+        moved = [entry for entry in visible if entry is not dragged]
+        index = max(0, min(index, len(moved)))
+        new_order = list(moved)
+        new_order.insert(index, dragged)
+        if new_order == visible:
+            return
+
+        # новое место определяем по видимым строкам, а перенумеровываем
+        # всю неделю, чтобы не сбить порядок скрытых фильтром сделок
+        before = index < len(moved)
+        anchor_ids = moved[index].ids if before else (moved[-1].ids if moved else None)
+
+        entries = self._full_week_entries(week)
+        target = next((entry for entry in entries if entry.ids == ids), None)
+        if target is None:
+            return
+        entries = [entry for entry in entries if entry.ids != ids]
+        position = len(entries)
+        for pos, entry in enumerate(entries):
+            if entry.ids == anchor_ids:
+                position = pos if before else pos + 1
+                break
+        entries.insert(position, target)
+
+        keys: dict[int, float] = {}
+        for pos, entry in enumerate(entries):
+            base = float(pos) * 10.0
+            keys[entry.deal.id] = base
+            for offset, child in enumerate(entry.children, start=1):
+                keys[child.id] = base + 0.001 * offset
+        self.db.set_sort_keys(keys)
+
+        scroll = self.scroll.verticalScrollBar().value()
+        self.refresh_history()
+        QTimer.singleShot(
+            0, lambda: self.scroll.verticalScrollBar().setValue(scroll)
+        )
+
+    def _full_week_entries(self, week: int) -> list[HistoryEntry]:
+        deals = self.db.all_deals()
+        anchor = self._history_anchor(deals)
+        return [
+            entry
+            for entry in self._history_entries(deals, anchor)
+            if entry.week == week
+        ]
 
     def _clear_history(self) -> None:
         while self.history_layout.count():
@@ -655,6 +815,14 @@ class MainWindow(QWidget):
         category = str(self.category_combo.currentData() or "transport")
 
         if self._editing_id is None:
+            parent_id = None
+            if side == "sell" and self._pending_parent_id is not None:
+                matches = (
+                    not self._pending_product
+                    or product.casefold() == self._pending_product.casefold()
+                )
+                if matches and self.db.get_deal(self._pending_parent_id):
+                    parent_id = self._pending_parent_id
             self.db.add_deal(
                 product=product,
                 side=side,
@@ -666,8 +834,13 @@ class MainWindow(QWidget):
                     Qt.DateFormat.ISODate
                 ),
                 category=category,
+                parent_id=parent_id,
             )
-            message = "Сделка добавлена"
+            message = (
+                "Продажа добавлена к покупке"
+                if parent_id is not None
+                else "Сделка добавлена"
+            )
         else:
             self.db.update_deal(
                 self._editing_id,
@@ -688,6 +861,8 @@ class MainWindow(QWidget):
     def _reset_form(self) -> None:
         self._editing_id = None
         self._quick_filled = False
+        self._pending_parent_id = None
+        self._pending_product = ""
         self.product_edit.clear()
         self.amount_edit.clear()
         self.comment_edit.clear()
@@ -707,6 +882,8 @@ class MainWindow(QWidget):
             return
         self._editing_id = deal.id
         self._quick_filled = False
+        self._pending_parent_id = None
+        self._pending_product = ""
         self.product_edit.setText(deal.product)
         self.amount_edit.setText(amount_to_text(deal.amount))
         side_index = 0 if deal.side == "buy" else 1
@@ -766,6 +943,8 @@ class MainWindow(QWidget):
             return
         self._editing_id = None
         self._quick_filled = True
+        self._pending_parent_id = None
+        self._pending_product = ""
         self.product_edit.setText(deal.product)
         self.amount_edit.setText(amount_to_text(deal.amount))
         self.side_combo.setCurrentIndex(0 if side == "buy" else 1)
@@ -781,8 +960,18 @@ class MainWindow(QWidget):
         self.cancel_button.show()
         self.amount_edit.setFocus()
         self.amount_edit.selectAll()
+
+        linked = False
+        if side == "sell" and deal.side == "buy":
+            # пара создаётся только по явной связи и только одна продажа
+            if self.db.linked_sales(deal.id) == 0:
+                self._pending_parent_id = deal.id
+                self._pending_product = deal.product
+                linked = True
         self._toast.show_message(
-            "Данные подставлены — проверьте сумму и нажмите «Внести»"
+            "Продажа встанет рядом с покупкой — проверьте сумму"
+            if linked
+            else "Данные подставлены — проверьте сумму и нажмите «Внести»"
         )
 
     def _show_photo(self, deal_id: int) -> None:

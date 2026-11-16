@@ -330,6 +330,12 @@ class Database:
         self._conn.execute("DELETE FROM deals WHERE id = ?", (deal_id,))
         self._conn.commit()
 
+    def set_deal_photo(self, deal_id: int, photo: bytes | None) -> None:
+        self._conn.execute(
+            "UPDATE deals SET photo = ? WHERE id = ?", (photo, deal_id)
+        )
+        self._conn.commit()
+
     def get_deal(self, deal_id: int) -> Deal | None:
         row = self._conn.execute(
             "SELECT * FROM deals WHERE id = ?", (deal_id,)

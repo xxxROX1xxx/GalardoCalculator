@@ -61,6 +61,7 @@ from .widgets import (
     AMOUNT_PATTERN,
     ElidedLabel,
     format_money,
+    image_to_jpeg,
     parse_amount,
     repolish,
     safe_tooltip,
@@ -1170,6 +1171,7 @@ class MarketDetail(QWidget):
         self._series: list[dict] = []
         self._stats: dict[str, tuple[QLabel, QLabel]] = {}
         self._thumb_pixmap: QPixmap | None = None
+        self._image: QImage | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1351,7 +1353,8 @@ class MarketDetail(QWidget):
         title.setObjectName("MarketCardTitle")
         titles.addWidget(title)
         sub = QLabel(
-            "Цена, количество и комментарий — можно изменить перед сохранением"
+            "Цена, количество и комментарий — можно изменить; "
+            "фото подставится из маркета"
         )
         sub.setObjectName("MarketSub")
         sub.setWordWrap(True)
@@ -1632,6 +1635,7 @@ class MarketDetail(QWidget):
             "amount": price * quantity,
             "comment": self._trade_comment.text().strip(),
             "category": KIND_CATEGORY.get(entry.kind, "transport"),
+            "photo": image_to_jpeg(self._image) if self._image is not None else b"",
         }
         self.tradeRequested.emit(payload)
         self._trade_comment.clear()
@@ -1677,6 +1681,7 @@ class MarketDetail(QWidget):
     # ------------------------------------------------------------------- data
     def set_entry(self, entry: MarketEntry) -> None:
         self._entry = entry
+        self._image = None
         self._thumb_pixmap = None
         self._thumb.set_zoomable(False)
         self._thumb.setText(entry.name[:1].upper())
@@ -1715,6 +1720,7 @@ class MarketDetail(QWidget):
     def set_image(self, image: QImage) -> None:
         if image.isNull():
             return
+        self._image = QImage(image)
         pixmap = QPixmap.fromImage(
             image.scaled(
                 128, 128,
@@ -1845,6 +1851,7 @@ class MarketPanel(QWidget):
 
     imageRequested = Signal(QImage, str)
     tradeRequested = Signal(dict)
+    tradePhotoReady = Signal(int, bytes)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -2194,9 +2201,40 @@ class MarketPanel(QWidget):
             return
         self.detail.set_own_stats(*data)
 
-    def notify_trade_saved(self, payload: dict) -> None:
+    def notify_trade_saved(self, payload: dict, deal_id: int) -> None:
         self.detail.set_trade_saved(payload)
         self._refresh_own_stats()
+        if payload.get("photo"):
+            return
+        entry = self._entry_by_key(str(payload.get("key") or "")) or self._current
+        if entry is not None:
+            self._request_trade_photo(entry, deal_id)
+
+    def _entry_by_key(self, key: str) -> MarketEntry | None:
+        for entry in self._entries:
+            if entry.key == key:
+                return entry
+        return None
+
+    def _request_trade_photo(
+        self, entry: MarketEntry, deal_id: int
+    ) -> None:
+        """Фото предмета не успело загрузиться к моменту сделки — догружаем."""
+
+        def finish(image: QImage) -> None:
+            if image.isNull():
+                return
+            data = image_to_jpeg(image)
+            if data:
+                self.tradePhotoReady.emit(deal_id, data)
+
+        def apply(image: QImage) -> None:
+            if image.isNull() and entry.image_alt:
+                self.service.request_image(entry.image_alt, finish)
+                return
+            finish(image)
+
+        self.service.request_image(entry.image, apply)
 
     def _show_list(self) -> None:
         self._current = None

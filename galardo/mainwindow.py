@@ -437,6 +437,7 @@ class MainWindow(QWidget):
         self.market = MarketPanel()
         self.market.imageRequested.connect(self._show_market_image)
         self.market.tradeRequested.connect(self._on_market_trade)
+        self.market.tradePhotoReady.connect(self._on_market_trade_photo)
         self.market.set_stats_provider(self._market_stats)
         self.view_stack.addWidget(self.market)
 
@@ -822,23 +823,30 @@ class MainWindow(QWidget):
             comment = f"{comment} · {unit}" if comment else unit
 
         now = QDateTime.currentDateTime()
-        self.db.add_deal(
+        deal_id = self.db.add_deal(
             product=product,
             side=str(payload.get("side") or "buy"),
             amount=amount,
             dealt_at=now.toString(Qt.DateFormat.ISODate),
             comment=comment,
-            photo=None,
+            photo=payload.get("photo") or None,
             created_at=now.toString(Qt.DateFormat.ISODate),
             category=str(payload.get("category") or "transport"),
             quantity=quantity,
         )
-        self.market.notify_trade_saved(payload)
+        self.market.notify_trade_saved(payload, deal_id)
         word = "Покупка" if payload.get("side") == "buy" else "Продажа"
         self._toast.show_message(
             f"{word} внесена в историю: "
             f"{format_money(amount, self.currency, with_sign=False)}"
         )
+        self.refresh_history()
+
+    def _on_market_trade_photo(self, deal_id: int, photo: bytes) -> None:
+        """Догрузили картинку маркета уже после сохранения сделки."""
+        if not photo:
+            return
+        self.db.set_deal_photo(deal_id, photo)
         self.refresh_history()
 
     # --------------------------------------------------------------------- dates

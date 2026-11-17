@@ -192,7 +192,7 @@ QLineEdit, QTextEdit, QComboBox, QSpinBox {
     color: #E9EBEE;
     font-size: 13px;
     selection-background-color: @ACCENT@;
-    selection-color: #FFFFFF;
+    selection-color: @ON_ACCENT@;
 }
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {
     border: 1px solid @ACCENT@;
@@ -629,7 +629,7 @@ QCalendarWidget QAbstractItemView:enabled {
     alternate-background-color: #15181D;
     color: #D7DADF;
     selection-background-color: @ACCENT@;
-    selection-color: #FFFFFF;
+    selection-color: @ON_ACCENT@;
     outline: 0;
     border: none;
     font-size: 12px;
@@ -641,7 +641,7 @@ QCalendarWidget QTableView {
     background-color: #111317;
     alternate-background-color: #15181D;
     selection-background-color: @ACCENT@;
-    selection-color: #FFFFFF;
+    selection-color: @ON_ACCENT@;
     border: none;
 }
 QCalendarWidget QHeaderView {
@@ -848,7 +848,7 @@ QPushButton:pressed { background-color: #DDE3EA; }
 QPushButton#Submit {
     background-color: @ACCENT@;
     border: 1px solid @ACCENT@;
-    color: #FFFFFF;
+    color: @ON_ACCENT@;
 }
 QPushButton#Submit:hover {
     background-color: @ACCENT_STRONG@;
@@ -1078,14 +1078,14 @@ QCalendarWidget QAbstractItemView:enabled {
     alternate-background-color: #F6F8FA;
     color: #33383F;
     selection-background-color: @ACCENT@;
-    selection-color: #FFFFFF;
+    selection-color: @ON_ACCENT@;
 }
 QCalendarWidget QAbstractItemView:disabled { color: #A9B0BA; }
 QCalendarWidget QTableView {
     background-color: #FFFFFF;
     alternate-background-color: #F6F8FA;
     selection-background-color: @ACCENT@;
-    selection-color: #FFFFFF;
+    selection-color: @ON_ACCENT@;
 }
 QCalendarWidget QHeaderView { background-color: #FFFFFF; color: #7A818B; }
 QCalendarWidget QHeaderView::section {
@@ -1110,13 +1110,65 @@ QMessageBox QLabel { color: #1B1F24; }
 
 
 def theme_accent(accent: str, theme_name: str = DEFAULT_THEME) -> QColor:
-    """Accent used for painting: pastel on black, darker on white for contrast."""
+    """Accent used for painting: always readable on the theme background."""
     color = QColor(accent)
     if not color.isValid():
         color = QColor(DEFAULT_ACCENT)
     if theme_name == "light":
-        return color.darker(138)
-    return color
+        return _ensure_contrast(color, QColor("#F4F6F9"), toward_white=False)
+    return _ensure_contrast(color, QColor("#0B0E12"), toward_white=True)
+
+
+def _channel_luminance(value: int) -> float:
+    channel = value / 255
+    if channel <= 0.03928:
+        return channel / 12.92
+    return ((channel + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(color: QColor) -> float:
+    return (
+        0.2126 * _channel_luminance(color.red())
+        + 0.7152 * _channel_luminance(color.green())
+        + 0.0722 * _channel_luminance(color.blue())
+    )
+
+
+def contrast_ratio(first: QColor, second: QColor) -> float:
+    one = relative_luminance(first)
+    two = relative_luminance(second)
+    high, low = max(one, two), min(one, two)
+    return (high + 0.05) / (low + 0.05)
+
+
+def contrast_text(background: QColor) -> QColor:
+    """White or near-black text, whichever reads better on the background."""
+    dark = QColor("#0B0E12")
+    light = QColor("#FFFFFF")
+    if contrast_ratio(background, dark) >= contrast_ratio(background, light):
+        return dark
+    return light
+
+
+def _blend(color: QColor, target: QColor, amount: float) -> QColor:
+    return QColor(
+        round(color.red() + (target.red() - color.red()) * amount),
+        round(color.green() + (target.green() - color.green()) * amount),
+        round(color.blue() + (target.blue() - color.blue()) * amount),
+    )
+
+
+def _ensure_contrast(
+    color: QColor, background: QColor, toward_white: bool, minimum: float = 4.5
+) -> QColor:
+    """Подмешать белый или чёрный, пока акцент не станет читаемым."""
+    target = QColor("#FFFFFF") if toward_white else QColor("#000000")
+    result = QColor(color)
+    for _step in range(24):
+        if contrast_ratio(result, background) >= minimum:
+            break
+        result = _blend(result, target, 0.12)
+    return result
 
 
 def palette(theme_name: str = DEFAULT_THEME, accent: str = DEFAULT_ACCENT) -> QPalette:
@@ -1151,8 +1203,10 @@ def palette(theme_name: str = DEFAULT_THEME, accent: str = DEFAULT_ACCENT) -> QP
     for role, color in roles.items():
         result.setColor(role, QColor(color))
     result.setColor(QPalette.ColorRole.Highlight, highlight)
-    result.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
-    result.setColor(QPalette.ColorRole.Link, highlight.lighter(115))
+    result.setColor(
+        QPalette.ColorRole.HighlightedText, contrast_text(highlight)
+    )
+    result.setColor(QPalette.ColorRole.Link, highlight)
     return result
 
 
@@ -1170,6 +1224,7 @@ def stylesheet(
         ("@ACCENT_SOFT@", f"rgba({red}, {green}, {blue}, 32)"),
         ("@ACCENT_STRONG@", accent_color.darker(112).name()),
         ("@ACCENT_DARK@", accent_color.darker(125).name()),
+        ("@ON_ACCENT@", contrast_text(accent_color).name()),
         ("@ACCENT@", accent_color.name()),
     )
     for token, value in replacements:

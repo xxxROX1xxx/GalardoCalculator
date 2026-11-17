@@ -8,7 +8,6 @@ from PySide6.QtCore import (
     QEvent,
     QPointF,
     QRectF,
-    QRegularExpression,
     QSize,
     QTimer,
     Qt,
@@ -25,7 +24,6 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QRadialGradient,
-    QRegularExpressionValidator,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -48,7 +46,7 @@ from . import icons, paths, theme
 from .db import CATEGORIES, Database, Deal
 from .market import KIND_CATEGORY, MarketPanel
 from .widgets import (
-    AMOUNT_PATTERN,
+    AmountLineEdit,
     ClickableLineEdit,
     DateTimePopup,
     DealCard,
@@ -172,6 +170,13 @@ class MainWindow(QWidget):
             )
         self.product_edit.setFocus()
 
+    def _submit_tint(self) -> str:
+        """Цвет значка на акцентной кнопке — контрастный к её фону."""
+        if self.theme_name != "light":
+            return "#F2F4F6"
+        accent = theme.theme_accent(self.accent, self.theme_name)
+        return theme.contrast_text(accent).name()
+
     def apply_appearance(self) -> None:
         theme.set_active_theme(self.theme_name)
         app = QApplication.instance()
@@ -200,7 +205,7 @@ class MainWindow(QWidget):
             self._clear_search_action.setIcon(icons.icon("close", tone))
         if hasattr(self, "submit_button"):
             name = "check" if self._editing_id is not None else "plus"
-            self.submit_button.setIcon(icons.icon(name, "#FFFFFF"))
+            self.submit_button.setIcon(icons.icon(name, self._submit_tint()))
         if hasattr(self, "market"):
             self.market.refresh_theme(self.accent)
         for index in range(self.history_layout.count()):
@@ -282,12 +287,9 @@ class MainWindow(QWidget):
         self.side_combo.addItem("Продал", "sell")
         self.side_combo.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.amount_edit = QLineEdit()
+        self.amount_edit = AmountLineEdit()
         self.amount_edit.setFixedHeight(42)
         self.amount_edit.setPlaceholderText("0")
-        self.amount_edit.setValidator(
-            QRegularExpressionValidator(QRegularExpression(AMOUNT_PATTERN), self)
-        )
         self.amount_edit.returnPressed.connect(self._on_submit)
         self.amount_edit.textChanged.connect(
             lambda: self._clear_field_error(self.amount_edit)
@@ -349,7 +351,7 @@ class MainWindow(QWidget):
         self.submit_button.setObjectName("Submit")
         self.submit_button.setFixedHeight(46)
         self.submit_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_button.setIcon(icons.icon("plus", "#FFFFFF"))
+        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
         self.submit_button.setIconSize(QSize(16, 16))
         self.submit_button.clicked.connect(self._on_submit)
         buttons.addWidget(self.submit_button, 1)
@@ -873,7 +875,7 @@ class MainWindow(QWidget):
         self._deal_dt = QDateTime.currentDateTime()
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
         self.submit_button.setText("Внести")
-        self.submit_button.setIcon(icons.icon("plus", "#FFFFFF"))
+        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
         self.cancel_button.hide()
         self.product_edit.setFocus()
 
@@ -899,7 +901,7 @@ class MainWindow(QWidget):
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
 
         self.submit_button.setText("Сохранить изменения")
-        self.submit_button.setIcon(icons.icon("check", "#FFFFFF"))
+        self.submit_button.setIcon(icons.icon("check", self._submit_tint()))
         self.cancel_button.show()
         self._clear_errors()
         self.product_edit.setFocus()
@@ -957,7 +959,7 @@ class MainWindow(QWidget):
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
         self._clear_errors()
         self.submit_button.setText("Внести")
-        self.submit_button.setIcon(icons.icon("plus", "#FFFFFF"))
+        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
         self.cancel_button.show()
         self.amount_edit.setFocus()
         self.amount_edit.selectAll()

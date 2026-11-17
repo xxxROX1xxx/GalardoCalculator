@@ -58,7 +58,6 @@ from . import icons, theme
 from .db import Deal
 
 # --------------------------------------------------------------------------- helpers
-AMOUNT_PATTERN = r"^\d{0,12}([.,]\d{0,2})?$"
 DEAL_DRAG_MIME = "application/x-galardo-deal"
 
 
@@ -82,15 +81,78 @@ def parse_amount(text: str) -> float | None:
         .replace(" ", "")
         .replace("\u00a0", "")
         .replace("\u202f", "")
-        .replace(",", ".")
     )
     if not cleaned:
         return None
+    if "," in cleaned:
+        # запятая — дробная часть, точки — разделители тысяч
+        whole, _, fraction = cleaned.partition(",")
+        cleaned = f"{whole.replace('.', '') or '0'}.{fraction or '0'}"
+    else:
+        cleaned = cleaned.replace(".", "")
     try:
         value = float(cleaned)
     except ValueError:
         return None
     return value if value > 0 else None
+
+
+def format_amount_text(text: str) -> str:
+    """Разделить тысячи точками: 1000000 -> 1.000.000, 1234,5 -> 1.234,5."""
+    cleaned = (
+        text.strip()
+        .replace(" ", "")
+        .replace("\u00a0", "")
+        .replace("\u202f", "")
+    )
+    if not cleaned:
+        return ""
+    whole, comma, fraction = cleaned.partition(",")
+    digits = "".join(char for char in whole if char.isdigit())[:12]
+    rest = "".join(char for char in fraction if char.isdigit())[:2]
+    grouped = f"{int(digits):,}".replace(",", ".") if digits else ""
+    if comma or rest:
+        return f"{grouped or '0'},{rest}"
+    return grouped
+
+
+class AmountLineEdit(QLineEdit):
+    """Поле суммы: точки разделяют тысячи, запятая — копейки."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._formatting = False
+        self.textEdited.connect(self._reformat)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        super().setText(format_amount_text(text))
+
+    def _reformat(self, text: str) -> None:
+        if self._formatting:
+            return
+        formatted = format_amount_text(text)
+        if formatted == text:
+            return
+        digits = sum(
+            1 for char in text[: self.cursorPosition()] if char.isdigit()
+        )
+        self._formatting = True
+        super().setText(formatted)
+        self._formatting = False
+        self._move_caret(digits)
+
+    def _move_caret(self, digits: int) -> None:
+        if digits <= 0:
+            self.setCursorPosition(0)
+            return
+        seen = 0
+        for index, char in enumerate(self.text()):
+            if char.isdigit():
+                seen += 1
+                if seen == digits:
+                    self.setCursorPosition(index + 1)
+                    return
+        self.setCursorPosition(len(self.text()))
 
 
 def deals_word(count: int) -> str:

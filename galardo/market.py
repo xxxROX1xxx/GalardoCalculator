@@ -22,7 +22,6 @@ from PySide6.QtCore import (
     QObject,
     QPointF,
     QRectF,
-    QRegularExpression,
     Qt,
     QTimer,
     QUrl,
@@ -38,7 +37,6 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
-    QRegularExpressionValidator,
 )
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -58,7 +56,7 @@ from PySide6.QtWidgets import (
 from . import icons, paths, theme
 from .clothing_wiki import WIKI_CLOTHES
 from .widgets import (
-    AMOUNT_PATTERN,
+    AmountLineEdit,
     ElidedLabel,
     format_money,
     image_to_jpeg,
@@ -1396,14 +1394,9 @@ class MarketDetail(QWidget):
         price_label = QLabel("Цена за 1 шт.")
         price_label.setObjectName("StatLabel")
         price_box.addWidget(price_label)
-        self._trade_price = QLineEdit()
+        self._trade_price = AmountLineEdit()
         self._trade_price.setFixedHeight(38)
-        self._trade_price.setPlaceholderText("Например: 1250")
-        self._trade_price.setValidator(
-            QRegularExpressionValidator(
-                QRegularExpression(AMOUNT_PATTERN), self
-            )
-        )
+        self._trade_price.setPlaceholderText("Например: 1.250")
         self._trade_price.textChanged.connect(self._update_trade_preview)
         self._trade_price.returnPressed.connect(self._on_trade_submit)
         price_box.addWidget(self._trade_price)

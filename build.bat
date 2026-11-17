@@ -29,6 +29,7 @@ echo [4/4] Building Galardo.exe...
     --name Galardo ^
     --icon "%~dp0assets\galardo.ico" ^
     --add-data "%~dp0assets\galardo_bg.jpg;assets" ^
+    --add-data "%~dp0assets\galardo.png;assets" ^
     --distpath dist ^
     --workpath build\work ^
     --specpath build ^

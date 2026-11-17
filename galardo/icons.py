@@ -16,10 +16,11 @@ from PySide6.QtGui import (
     QPixmap,
 )
 
-from .paths import data_dir
+from .paths import data_dir, resource_path
 
 ICON_CANVAS = 72  # rendered larger, Qt downscales smoothly
 DEFAULT_ICON_COLOR = "#C3C8CF"
+BRAND_ICON = ("assets", "galardo.png")
 
 
 # --------------------------------------------------------------------------- drawings
@@ -230,10 +231,23 @@ def logo_pixmap(size: int = 26) -> QPixmap:
     return pm
 
 
+def brand_image(size: int) -> QImage:
+    """Application icon artwork, falling back to the drawn «G» placeholder."""
+    image = QImage(str(resource_path(*BRAND_ICON)))
+    if not image.isNull():
+        return image.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    return logo_image(size)
+
+
 def app_icon() -> QIcon:
     result = QIcon()
     for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
-        result.addPixmap(QPixmap.fromImage(logo_image(size)))
+        result.addPixmap(QPixmap.fromImage(brand_image(size)))
     return result
 
 
@@ -241,7 +255,7 @@ def write_ico(path: str | Path, sizes: tuple[int, ...] = (16, 24, 32, 48, 64, 12
     """Write a multi-size Windows .ico with PNG payloads."""
     payloads: list[tuple[int, bytes]] = []
     for size in sizes:
-        image = logo_image(size)
+        image = brand_image(size)
         data = QByteArray()
         buffer = QBuffer(data)
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)

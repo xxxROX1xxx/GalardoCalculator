@@ -246,28 +246,70 @@ def brand_image(size: int) -> QImage:
 
 def app_icon() -> QIcon:
     result = QIcon()
-    for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+    for size in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256):
         result.addPixmap(QPixmap.fromImage(brand_image(size)))
     return result
 
 
-def write_ico(path: str | Path, sizes: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)) -> Path:
-    """Write a multi-size Windows .ico with PNG payloads."""
+def _ico_dib(image: QImage) -> bytes:
+    """32-bit BMP payload for an .ico entry (Explorer reads alpha reliably)."""
+    size = image.width()
+    image = image.convertToFormat(QImage.Format.Format_ARGB32)
+    data = bytes(image.constBits())
+    stride = image.bytesPerLine()
+
+    header = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        size,
+        size * 2,
+        1,
+        32,
+        0,
+        size * size * 4,
+        0,
+        0,
+        0,
+        0,
+    )
+    xor_rows = bytearray()
+    for y in range(size - 1, -1, -1):
+        start = y * stride
+        xor_rows += data[start : start + size * 4]
+
+    mask_stride = ((size + 31) // 32) * 4
+    mask = bytearray(mask_stride * size)
+    for y in range(size):
+        start = y * stride
+        row = (size - 1 - y) * mask_stride
+        for x in range(size):
+            if data[start + x * 4 + 3] == 0:
+                mask[row + (x >> 3)] |= 0x80 >> (x & 7)
+    return header + bytes(xor_rows) + bytes(mask)
+
+
+def write_ico(
+    path: str | Path, sizes: tuple[int, ...] = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
+) -> Path:
+    """Write a multi-size Windows .ico: BMP entries, PNG only for 256."""
     payloads: list[tuple[int, bytes]] = []
     for size in sizes:
         image = brand_image(size)
-        data = QByteArray()
-        buffer = QBuffer(data)
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        image.save(buffer, "PNG")
-        buffer.close()
-        payloads.append((size, bytes(data)))
+        if size >= 256:
+            data = QByteArray()
+            buffer = QBuffer(data)
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            image.save(buffer, "PNG")
+            buffer.close()
+            payloads.append((size, bytes(data)))
+        else:
+            payloads.append((size, _ico_dib(image)))
 
     header = struct.pack("<HHH", 0, 1, len(payloads))
     offset = 6 + 16 * len(payloads)
     entries = bytearray()
     blobs = bytearray()
-    for size, png in payloads:
+    for size, payload in payloads:
         entries += struct.pack(
             "<BBBBHHII",
             size if size < 256 else 0,
@@ -276,11 +318,11 @@ def write_ico(path: str | Path, sizes: tuple[int, ...] = (16, 24, 32, 48, 64, 12
             0,
             1,
             32,
-            len(png),
+            len(payload),
             offset,
         )
-        offset += len(png)
-        blobs += png
+        offset += len(payload)
+        blobs += payload
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

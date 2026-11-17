@@ -585,7 +585,8 @@ class MainWindow(QWidget):
         )
         pair = PairSection(entry.deal, entry.children, self.currency, expanded)
         pair.entry_ids = entry.ids
-        for member in entry.members:
+        # сверху продажа, под ней покупка
+        for member in [*entry.children, entry.deal]:
             pair.add_card(self._make_deal_card(member))
         pair.enable_drag(entry.ids, week)
         pair.toggled.connect(

@@ -1265,12 +1265,16 @@ class PairSection(QWidget):
 
         if len(children) == 1:
             meta_text = (
-                f"Купил {format_money(deal.amount, currency, with_sign=False)}"
-                f" · Продал "
+                f"Продал "
                 f"{format_money(children[0].amount, currency, with_sign=False)}"
+                f" · Купил "
+                f"{format_money(deal.amount, currency, with_sign=False)}"
             )
         else:
-            meta_text = f"Покупка и {len(children)} {_sales_word(len(children))}"
+            meta_text = (
+                f"{len(children)} {_sales_word(len(children))} · Покупка "
+                f"{format_money(deal.amount, currency, with_sign=False)}"
+            )
         meta = QLabel(meta_text)
         meta.setObjectName("PairMeta")
         header.addWidget(meta)

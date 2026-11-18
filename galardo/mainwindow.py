@@ -6,7 +6,7 @@ from PySide6.QtCore import (
     QDate,
     QDateTime,
     QEvent,
-    QPointF,
+    QPoint,
     QRectF,
     QSize,
     QTimer,
@@ -14,16 +14,14 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
-    QFont,
     QGuiApplication,
+    QIcon,
     QImage,
     QKeySequence,
     QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
-    QPixmap,
-    QRadialGradient,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -42,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, paths, theme
+from . import design, icons, theme, ui_kit
 from .db import CATEGORIES, Database, Deal
 from .market import KIND_CATEGORY, MarketPanel
 from .widgets import (
@@ -59,7 +57,9 @@ from .widgets import (
     Toast,
     WeekSection,
     deals_word,
+    crossfade_stack,
     format_money,
+    install_press_feedback,
     parse_amount,
     repolish,
 )
@@ -108,10 +108,6 @@ class MainWindow(QWidget):
         self.theme_name = self.db.get_setting("theme", theme.DEFAULT_THEME)
         if self.theme_name not in theme.THEMES:
             self.theme_name = theme.DEFAULT_THEME
-        self.photo_bg = self.db.get_setting("photo_bg", "1") != "0"
-        self._photo_image: QImage | None = None
-        self._photo_cache_key: tuple[int, int, str] | None = None
-        self._photo_cache: QPixmap | None = None
         self._editing_id: int | None = None
         self._quick_filled = False
         self._active_tab = "all"
@@ -141,22 +137,30 @@ class MainWindow(QWidget):
 
         self._date_time_popup = DateTimePopup(self)
         self._date_time_popup.accepted.connect(self._on_deal_dt_selected)
+        self._date_time_popup.refresh_shadow(self.theme_name, self.accent)
         self._settings_popup = SettingsPopup(self)
         self._settings_popup.accentChanged.connect(self._on_accent_changed)
         self._settings_popup.themeChanged.connect(self._on_theme_changed)
-        self._settings_popup.photoBackgroundChanged.connect(
-            self._on_photo_bg_changed
-        )
+        self._settings_popup.refresh_shadow(self.theme_name, self.accent)
 
         self._overlay = ImageOverlay(self)
         self._toast = Toast(self)
+        self.photo.photoAdded.connect(
+            lambda: self._toast.show_message("Фотография добавлена")
+        )
+        self.photo.photoReplaced.connect(
+            lambda: self._toast.show_message("Фотография обновлена")
+        )
 
         self._date_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
         self._date_shortcut.activated.connect(self._on_submit)
         self._date_shortcut2 = QShortcut(QKeySequence("Ctrl+Enter"), self)
         self._date_shortcut2.activated.connect(self._on_submit)
 
-        QApplication.instance().installEventFilter(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+            install_press_feedback(app)
         self.refresh_history()
 
         imported = getattr(self.db, "legacy_imported", 0)
@@ -172,8 +176,6 @@ class MainWindow(QWidget):
 
     def _submit_tint(self) -> str:
         """Цвет значка на акцентной кнопке — контрастный к её фону."""
-        if self.theme_name != "light":
-            return "#F2F4F6"
         accent = theme.theme_accent(self.accent, self.theme_name)
         return theme.contrast_text(accent).name()
 
@@ -189,6 +191,12 @@ class MainWindow(QWidget):
                 )
             )
         self._refresh_icons()
+        if hasattr(self, "_panel_surfaces"):
+            self._update_panel_shadows()
+        for popup_name in ("_settings_popup", "_date_time_popup"):
+            popup = getattr(self, popup_name, None)
+            if popup is not None:
+                popup.refresh_shadow(self.theme_name, self.accent)
         self.update()
 
     def _refresh_icons(self) -> None:
@@ -204,8 +212,10 @@ class MainWindow(QWidget):
             self._search_action.setIcon(icons.icon("search", tone))
             self._clear_search_action.setIcon(icons.icon("close", tone))
         if hasattr(self, "submit_button"):
-            name = "check" if self._editing_id is not None else "plus"
-            self.submit_button.setIcon(icons.icon(name, self._submit_tint()))
+            if self._editing_id is not None:
+                self.submit_button.setIcon(icons.icon("check", self._submit_tint()))
+            else:
+                self.submit_button.setIcon(QIcon())
         if hasattr(self, "market"):
             self.market.refresh_theme(self.accent)
         for index in range(self.history_layout.count()):
@@ -240,6 +250,10 @@ class MainWindow(QWidget):
             )
 
     def _build_ui(self) -> None:
+        self._panel_surfaces: list[QFrame] = []
+        self._shadow_color = theme.shadow_color(
+            self.theme_name, self.accent, strong=True
+        )
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -252,47 +266,142 @@ class MainWindow(QWidget):
         root.addWidget(self.title_bar)
 
         content = QHBoxLayout()
-        content.setContentsMargins(22, 4, 22, 22)
+        content.setContentsMargins(24, 14, 24, 24)
         content.setSpacing(18)
-        content.addWidget(self._build_form_panel(), 5)
-        content.addWidget(self._build_history_panel(), 6)
+
+        form_panel = self.form_panel = self._build_form_panel()
+        history_panel = self.history_panel = self._build_history_panel()
+        self._register_panel_shadow(form_panel)
+        self._register_panel_shadow(history_panel)
+
+        # 43 / 57 keeps both columns readable at 1200 px and wider.
+        content.addWidget(form_panel, 43)
+        content.addWidget(history_panel, 57)
         root.addLayout(content, 1)
 
         self._grip = ResizeGrip(self)
         self._grip.raise_()
 
+    def _register_panel_shadow(self, panel: QFrame) -> None:
+        """Elevation is painted by the window itself.
+
+        A QGraphicsDropShadowEffect on a panel is repainted from an offscreen
+        buffer, and any child update (checked tab, hover, crossfade) can tear
+        that buffer: the tab row lost a button and a strip of the title bar
+        leaked into the list. Painting the shadow in ``paintEvent`` keeps the
+        elevation while every child repaints straight to the backing store.
+        """
+        self._panel_surfaces.append(panel)
+        panel.installEventFilter(self)
+        self._update_panel_shadows()
+
+    def _update_panel_shadows(self) -> None:
+        self._shadow_color = theme.shadow_color(
+            self.theme_name, self.accent, strong=True
+        )
+        self.update()
+
+    def _paint_panel_shadow(self, painter: QPainter, panel: QFrame) -> None:
+        if not panel.isVisible():
+            return
+        rect = QRectF(panel.mapTo(self, QPoint(0, 0)), panel.size())
+        rect.translate(0.0, 5.0)
+        base = QColor(self._shadow_color)
+        radius = float(design.RADIUS["panel"])
+        painter.save()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        # Concentric 2 px rings instead of filled shapes: filled layers stack
+        # their alpha and turn the shadow into a solid band in the light theme.
+        for step in range(1, 15):
+            falloff = (1.0 - step / 15.0) ** 2.0
+            color = QColor(base)
+            color.setAlphaF(max(0.0, min(1.0, base.alphaF() * falloff)))
+            painter.setPen(QPen(color, 2.2))
+            shape = rect.adjusted(
+                -float(step),
+                -float(step) * 0.55,
+                float(step),
+                float(step) * 1.05,
+            )
+            path = QPainterPath()
+            path.addRoundedRect(
+                shape, radius + step * 0.45, radius + step * 0.45
+            )
+            painter.drawPath(path)
+        painter.restore()
+
     def _build_form_panel(self) -> QFrame:
-        panel = QFrame()
-        panel.setObjectName("Panel")
+        panel = ui_kit.Panel()
         panel.setMinimumWidth(420)
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(0)
+
+        # heading --------------------------------------------------------------
+        heading = QWidget()
+        heading_box = QVBoxLayout(heading)
+        heading_box.setContentsMargins(0, 0, 0, 0)
+        heading_box.setSpacing(3)
+        title = QLabel("Новая сделка")
+        title.setObjectName("PanelTitle")
+        heading_box.addWidget(title)
+        subtitle = QLabel("Заполните поля — сделка сразу попадёт в историю")
+        subtitle.setObjectName("PanelSubtitle")
+        heading_box.addWidget(subtitle)
+        layout.addWidget(heading)
+        layout.addSpacing(14)
+
+        # scrollable fields ----------------------------------------------------
+        self.form_scroll = QScrollArea()
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.form_scroll.viewport().setAutoFillBackground(False)
+
+        self.form_content = QWidget()
+        self.form_content.setObjectName("FormContent")
+        self.form_content.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
+        form = QVBoxLayout(self.form_content)
+        form.setContentsMargins(0, 0, 5, 0)
+        form.setSpacing(12)
 
         # product --------------------------------------------------------------
         self.product_edit = QLineEdit()
-        self.product_edit.setFixedHeight(42)
+        self.product_edit.setFixedHeight(44)
         self.product_edit.setPlaceholderText("Например: Truffade Vivo")
+        self.product_edit.setClearButtonEnabled(True)
         self.product_edit.returnPressed.connect(self._on_submit)
         self.product_edit.textChanged.connect(
             lambda: self._clear_field_error(self.product_edit)
         )
-        layout.addWidget(self._group("Название товара", self.product_edit))
+        self.product_edit.addAction(
+            icons.icon("receipt", theme.icon_tone("muted")),
+            QLineEdit.ActionPosition.LeadingPosition,
+        )
+        form.addWidget(self._group("Название товара", self.product_edit))
 
         # side + amount --------------------------------------------------------
         self.side_combo = QComboBox()
-        self.side_combo.setFixedHeight(42)
+        self.side_combo.setFixedHeight(44)
         self.side_combo.addItem("Купил", "buy")
         self.side_combo.addItem("Продал", "sell")
         self.side_combo.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.amount_edit = AmountLineEdit()
-        self.amount_edit.setFixedHeight(42)
+        self.amount_edit.setFixedHeight(44)
         self.amount_edit.setPlaceholderText("0")
         self.amount_edit.returnPressed.connect(self._on_submit)
         self.amount_edit.textChanged.connect(
             lambda: self._clear_field_error(self.amount_edit)
+        )
+        self.amount_edit.addAction(
+            icons.icon("chart", theme.icon_tone("muted")),
+            QLineEdit.ActionPosition.LeadingPosition,
         )
 
         deal_row = QHBoxLayout()
@@ -300,11 +409,11 @@ class MainWindow(QWidget):
         deal_row.setSpacing(12)
         deal_row.addWidget(self._group("Что сделал", self.side_combo), 5)
         deal_row.addWidget(self._group("Сумма сделки", self.amount_edit), 6)
-        layout.addLayout(deal_row)
+        form.addLayout(deal_row)
 
         # category + deal date ------------------------------------------------
         self.category_combo = QComboBox()
-        self.category_combo.setFixedHeight(42)
+        self.category_combo.setFixedHeight(44)
         self.category_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         for key, name in CATEGORIES.items():
             self.category_combo.addItem(name, key)
@@ -312,10 +421,14 @@ class MainWindow(QWidget):
 
         self.deal_dt_edit = ClickableLineEdit()
         self.deal_dt_edit.setReadOnly(True)
-        self.deal_dt_edit.setFixedHeight(42)
+        self.deal_dt_edit.setFixedHeight(44)
         self.deal_dt_edit.setCursor(Qt.CursorShape.PointingHandCursor)
         self.deal_dt_edit.setToolTip("Изменить дату и время")
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
+        self.deal_dt_edit.addAction(
+            icons.icon("calendar", theme.icon_tone("muted")),
+            QLineEdit.ActionPosition.LeadingPosition,
+        )
         refresh_action = self.deal_dt_edit.addAction(
             icons.icon("refresh", theme.icon_tone("muted")),
             QLineEdit.ActionPosition.TrailingPosition,
@@ -329,29 +442,39 @@ class MainWindow(QWidget):
         meta_row.setSpacing(12)
         meta_row.addWidget(self._group("Категория", self.category_combo), 5)
         meta_row.addWidget(self._group("Дата сделки", self.deal_dt_edit), 6)
-        layout.addLayout(meta_row)
+        form.addLayout(meta_row)
 
         # comment --------------------------------------------------------------
         self.comment_edit = QTextEdit()
-        self.comment_edit.setFixedHeight(92)
+        self.comment_edit.setFixedHeight(84)
         self.comment_edit.setPlaceholderText("Текст комментария...")
         self.comment_edit.setTabChangesFocus(True)
-        layout.addWidget(self._group("Комментарий", self.comment_edit))
+        form.addWidget(self._group("Комментарий", self.comment_edit))
 
         # photo ----------------------------------------------------------------
         self.photo = PhotoDrop()
-        layout.addWidget(self._group("Фото сделки", self.photo))
+        form.addWidget(self._group("Фотография", self.photo))
 
-        layout.addStretch(1)
+        form.addStretch(1)
+        self.form_scroll.setWidget(self.form_content)
+        layout.addWidget(self.form_scroll, 1)
 
-        # submit ---------------------------------------------------------------
+        # pinned submit --------------------------------------------------------
+        layout.addSpacing(12)
+        divider = QFrame()
+        divider.setObjectName("Divider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        layout.addSpacing(12)
+
         buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.submit_button = QPushButton("Внести")
+        self.submit_button = QPushButton("+ Внести сделку")
         self.submit_button.setObjectName("Submit")
         self.submit_button.setFixedHeight(46)
         self.submit_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
+        self.submit_button.setToolTip("Ctrl+Enter — сохранить сделку")
         self.submit_button.setIconSize(QSize(16, 16))
         self.submit_button.clicked.connect(self._on_submit)
         buttons.addWidget(self.submit_button, 1)
@@ -369,10 +492,9 @@ class MainWindow(QWidget):
         return panel
 
     def _build_history_panel(self) -> QFrame:
-        panel = QFrame()
-        panel.setObjectName("Panel")
+        panel = ui_kit.Panel()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(20, 16, 20, 18)
+        layout.setContentsMargins(20, 18, 20, 20)
         layout.setSpacing(12)
 
         header = QHBoxLayout()
@@ -409,8 +531,8 @@ class MainWindow(QWidget):
         page_layout.setSpacing(12)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setFixedHeight(42)
-        self.search_edit.setPlaceholderText("Поиск сделки")
+        self.search_edit.setFixedHeight(44)
+        self.search_edit.setPlaceholderText("Поиск по сделкам")
         self._search_action = self.search_edit.addAction(
             icons.icon("search", theme.icon_tone("muted")),
             QLineEdit.ActionPosition.LeadingPosition,
@@ -495,13 +617,15 @@ class MainWindow(QWidget):
         self._tab_buttons[key].setChecked(True)
         if key == "market":
             self.count_label.hide()
-            self.view_stack.setCurrentWidget(self.market)
-            self.market.ensure_loaded()
+            crossfade_stack(
+                self.view_stack, self.market, 170, update=self.market.ensure_loaded
+            )
             self.market.search.setFocus()
             return
         self.count_label.show()
-        self.view_stack.setCurrentWidget(self.history_page)
-        self.refresh_history()
+        crossfade_stack(
+            self.view_stack, self.history_page, 170, update=self.refresh_history
+        )
 
     def _remember_week(self, week: int, expanded: bool) -> None:
         self._week_expanded[(self._active_tab, week)] = expanded
@@ -509,7 +633,15 @@ class MainWindow(QWidget):
     def _remember_pair(self, deal_id: int, expanded: bool) -> None:
         self._pair_expanded[(self._active_tab, deal_id)] = expanded
 
+    def _refresh_stats(self) -> None:
+        """Top bar metrics always reflect the whole journal, not the filter."""
+        deals = self.db.all_deals()
+        total = sum(deal.signed_amount for deal in deals)
+        closed, active = self.db.position_counts()
+        self.title_bar.set_stats(total, closed, active, self.currency)
+
     def refresh_history(self) -> None:
+        self._refresh_stats()
         if getattr(self, "_active_tab", "all") == "market":
             return
         query = self.search_edit.text().strip()
@@ -577,6 +709,7 @@ class MainWindow(QWidget):
         card = DealCard(deal, self.currency)
         card.editRequested.connect(self._load_deal_for_edit)
         card.deleteRequested.connect(self._confirm_delete)
+        card.copyRequested.connect(self._copy_deal)
         card.quickRequested.connect(self._quick_add)
         card.photoRequested.connect(self._show_photo)
         return card
@@ -587,6 +720,9 @@ class MainWindow(QWidget):
         )
         pair = PairSection(entry.deal, entry.children, self.currency, expanded)
         pair.entry_ids = entry.ids
+        pair.editRequested.connect(self._load_deal_for_edit)
+        pair.deleteRequested.connect(self._confirm_delete)
+        pair.copyRequested.connect(self._copy_pair)
         # сверху продажа, под ней покупка
         for member in [*entry.children, entry.deal]:
             pair.add_card(self._make_deal_card(member))
@@ -817,45 +953,49 @@ class MainWindow(QWidget):
         photo = self.photo.photo_bytes()
         category = str(self.category_combo.currentData() or "transport")
 
-        if self._editing_id is None:
-            parent_id = None
-            if side == "sell" and self._pending_parent_id is not None:
-                matches = (
-                    not self._pending_product
-                    or product.casefold() == self._pending_product.casefold()
+        try:
+            if self._editing_id is None:
+                parent_id = None
+                if side == "sell" and self._pending_parent_id is not None:
+                    matches = (
+                        not self._pending_product
+                        or product.casefold() == self._pending_product.casefold()
+                    )
+                    if matches and self.db.get_deal(self._pending_parent_id):
+                        parent_id = self._pending_parent_id
+                self.db.add_deal(
+                    product=product,
+                    side=side,
+                    amount=amount,
+                    dealt_at=dealt_at,
+                    comment=comment,
+                    photo=photo,
+                    created_at=QDateTime.currentDateTime().toString(
+                        Qt.DateFormat.ISODate
+                    ),
+                    category=category,
+                    parent_id=parent_id,
                 )
-                if matches and self.db.get_deal(self._pending_parent_id):
-                    parent_id = self._pending_parent_id
-            self.db.add_deal(
-                product=product,
-                side=side,
-                amount=amount,
-                dealt_at=dealt_at,
-                comment=comment,
-                photo=photo,
-                created_at=QDateTime.currentDateTime().toString(
-                    Qt.DateFormat.ISODate
-                ),
-                category=category,
-                parent_id=parent_id,
-            )
-            message = (
-                "Продажа добавлена к покупке"
-                if parent_id is not None
-                else "Сделка добавлена"
-            )
-        else:
-            self.db.update_deal(
-                self._editing_id,
-                product=product,
-                side=side,
-                amount=amount,
-                dealt_at=dealt_at,
-                comment=comment,
-                photo=photo,
-                category=category,
-            )
-            message = "Изменения сохранены"
+                message = (
+                    "Продажа добавлена к покупке"
+                    if parent_id is not None
+                    else "Сделка добавлена"
+                )
+            else:
+                self.db.update_deal(
+                    self._editing_id,
+                    product=product,
+                    side=side,
+                    amount=amount,
+                    dealt_at=dealt_at,
+                    comment=comment,
+                    photo=photo,
+                    category=category,
+                )
+                message = "Сделка обновлена"
+        except Exception:
+            self._toast.show_message("Не удалось сохранить сделку")
+            return
 
         self._reset_form()
         self.refresh_history()
@@ -874,8 +1014,8 @@ class MainWindow(QWidget):
         self.category_combo.setCurrentIndex(0)
         self._deal_dt = QDateTime.currentDateTime()
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
-        self.submit_button.setText("Внести")
-        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
+        self.submit_button.setText("+ Внести сделку")
+        self.submit_button.setIcon(QIcon())
         self.cancel_button.hide()
         self.product_edit.setFocus()
 
@@ -934,7 +1074,11 @@ class MainWindow(QWidget):
         box.exec()
 
         if box.clickedButton() is delete_button:
-            self.db.delete_deal(deal_id)
+            try:
+                self.db.delete_deal(deal_id)
+            except Exception:
+                self._toast.show_message("Не удалось удалить сделку")
+                return
             if self._editing_id == deal_id:
                 self._reset_form()
             self.refresh_history()
@@ -958,8 +1102,8 @@ class MainWindow(QWidget):
         self._deal_dt = QDateTime.currentDateTime()
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
         self._clear_errors()
-        self.submit_button.setText("Внести")
-        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
+        self.submit_button.setText("+ Внести сделку")
+        self.submit_button.setIcon(QIcon())
         self.cancel_button.show()
         self.amount_edit.setFocus()
         self.amount_edit.selectAll()
@@ -981,6 +1125,47 @@ class MainWindow(QWidget):
         deal = self.db.get_deal(deal_id)
         if deal and deal.photo:
             self._overlay.show_image(deal.photo, deal.product)
+
+    @staticmethod
+    def _deal_moment(deal: Deal) -> str:
+        moment = QDateTime.fromString(deal.dealt_at, Qt.DateFormat.ISODate)
+        return moment.toString("dd.MM.yyyy HH:mm") if moment.isValid() else deal.dealt_at
+
+    def _copy_to_clipboard(self, text: str, message: str) -> None:
+        QGuiApplication.clipboard().setText(text)
+        self._toast.show_message(message)
+
+    def _copy_deal(self, deal_id: int) -> None:
+        deal = self.db.get_deal(deal_id)
+        if deal is None:
+            return
+        lines = [
+            f"{'Купил' if deal.side == 'buy' else 'Продал'}: {deal.product}",
+            f"Категория: {CATEGORIES.get(deal.category, deal.category)}",
+            f"Сумма: {format_money(deal.signed_amount, self.currency)}",
+            f"Дата: {self._deal_moment(deal)}",
+        ]
+        if deal.comment:
+            lines.append(f"Комментарий: {deal.comment}")
+        self._copy_to_clipboard("\n".join(lines), "Сделка скопирована")
+
+    def _copy_pair(self, deal_id: int) -> None:
+        deal = self.db.get_deal(deal_id)
+        if deal is None:
+            return
+        children = [
+            item for item in self.db.all_deals() if item.parent_id == deal.id
+        ]
+        total = deal.signed_amount + sum(item.signed_amount for item in children)
+        lines = [
+            f"Пара: {deal.product}",
+            f"Покупка: {format_money(deal.amount, self.currency, with_sign=False)}",
+            f"Продажа: "
+            f"{format_money(sum(item.amount for item in children), self.currency, with_sign=False)}",
+            f"Итог: {format_money(total, self.currency)}",
+            f"Дата: {self._deal_moment(deal)}",
+        ]
+        self._copy_to_clipboard("\n".join(lines), "Пара скопирована")
 
     def _show_market_image(self, image: QImage, title: str) -> None:
         self._overlay.show_qimage(image, title)
@@ -1059,7 +1244,6 @@ class MainWindow(QWidget):
             self.title_bar.settings_button,
             self.accent,
             self.theme_name,
-            self.photo_bg,
         )
 
     def _on_accent_changed(self, accent: str) -> None:
@@ -1076,11 +1260,6 @@ class MainWindow(QWidget):
         self._toast.show_message(
             "Включена белая тема" if theme_name == "light" else "Включена чёрная тема"
         )
-
-    def _on_photo_bg_changed(self, enabled: bool) -> None:
-        self.photo_bg = enabled
-        self.db.set_setting("photo_bg", "1" if enabled else "0")
-        self.update()
 
     # -------------------------------------------------------------------- events
     def _photo_paste_allowed(self) -> bool:
@@ -1105,6 +1284,16 @@ class MainWindow(QWidget):
         ):
             event.accept()
             return True
+        panels = getattr(self, "_panel_surfaces", ())
+        if obj in panels and event.type() in (
+            QEvent.Type.Resize,
+            QEvent.Type.Move,
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+        ):
+            # The elevation lives in the window background, so it has to be
+            # repainted whenever a column changes size or position.
+            self.update()
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
@@ -1148,43 +1337,8 @@ class MainWindow(QWidget):
             self.update()
         super().changeEvent(event)
 
-    def _paint_photo(self, painter: QPainter) -> None:
-        image = self._photo_image
-        if image is None:
-            image = QImage(str(paths.resource_path("assets", "galardo_bg.jpg")))
-            self._photo_image = image
-        if image.isNull():
-            return
-
-        rect = QRectF(self.rect())
-        scale = max(
-            rect.width() / max(1, image.width()),
-            rect.height() / max(1, image.height()),
-        )
-        target_w = max(1, int(round(image.width() * scale)))
-        target_h = max(1, int(round(image.height() * scale)))
-        key = (target_w, target_h)
-        if self._photo_cache is None or self._photo_cache_key != key:
-            scaled = image.scaled(
-                target_w,
-                target_h,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self._photo_cache = QPixmap.fromImage(scaled)
-            self._photo_cache_key = key
-
-        x = rect.center().x() - target_w / 2
-        y = rect.center().y() - target_h / 2
-        painter.save()
-        painter.setCompositionMode(
-            QPainter.CompositionMode.CompositionMode_Plus
-        )
-        painter.setOpacity(0.34)
-        painter.drawPixmap(QPointF(x, y), self._photo_cache)
-        painter.restore()
-
     def paintEvent(self, event) -> None:  # noqa: N802
+        """Graphite surface with one restrained vertical gradient."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
@@ -1193,57 +1347,18 @@ class MainWindow(QWidget):
         path.addRoundedRect(rect, radius, radius)
         painter.setClipPath(path)
 
-        light = self.theme_name == "light"
-        base = QLinearGradient(0, 0, self.width(), self.height())
-        if light:
-            base.setColorAt(0.0, QColor("#FFFFFF"))
-            base.setColorAt(0.52, QColor("#F2F5FA"))
-            base.setColorAt(1.0, QColor("#E7ECF4"))
-        else:
-            base.setColorAt(0.0, QColor("#050608"))
-            base.setColorAt(0.52, QColor("#090B0E"))
-            base.setColorAt(1.0, QColor("#030405"))
+        theme_tokens = design.tokens(self.theme_name)
+        base = QLinearGradient(0, 0, 0, self.height())
+        base.setColorAt(0.0, QColor(theme_tokens.bg_top))
+        base.setColorAt(0.55, QColor(theme_tokens.bg))
+        base.setColorAt(1.0, QColor(theme_tokens.bg_bottom))
         painter.fillPath(path, base)
 
-        accent = theme.theme_accent(self.accent, self.theme_name)
-        red, green, blue, _alpha = accent.getRgb()
-        glow_alpha = 40 if light else 70
-        glow = QRadialGradient(
-            QPointF(self.width() * 0.16, self.height() * 1.02),
-            max(self.width(), self.height()) * 0.8,
-        )
-        glow.setColorAt(0.0, QColor(red, green, blue, glow_alpha))
-        glow.setColorAt(0.45, QColor(red, green, blue, int(glow_alpha * 0.32)))
-        glow.setColorAt(1.0, QColor(red, green, blue, 0))
-        painter.fillRect(self.rect(), glow)
-
-        glow2 = QRadialGradient(
-            QPointF(self.width() * 0.99, self.height() * 0.12),
-            self.width() * 0.6,
-        )
-        glow2.setColorAt(0.0, QColor(red, green, blue, 26 if light else 34))
-        glow2.setColorAt(1.0, QColor(red, green, blue, 0))
-        painter.fillRect(self.rect(), glow2)
-
-        if self.photo_bg and not light:
-            self._paint_photo(painter)
-
-        if light:
-            font = QFont("Segoe UI")
-            font.setPixelSize(max(72, int(self.width() * 0.12)))
-            font.setWeight(QFont.Weight.Bold)
-            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 16)
-            painter.setFont(font)
-            painter.setPen(QColor(0, 0, 0, 58))
-            painter.drawText(
-                self.rect(), Qt.AlignmentFlag.AlignCenter, "GALARDO"
-            )
+        for panel in getattr(self, "_panel_surfaces", ()):
+            self._paint_panel_shadow(painter, panel)
 
         if radius:
-            border = (
-                QColor(0, 0, 0, 34) if light else QColor(255, 255, 255, 26)
-            )
-            painter.setPen(QPen(border, 1))
+            painter.setPen(QPen(QColor(theme_tokens.border), 1))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
 

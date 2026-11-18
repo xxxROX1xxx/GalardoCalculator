@@ -53,11 +53,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, paths, theme
+from . import design, icons, paths, theme
 from .clothing_wiki import WIKI_CLOTHES
 from .widgets import (
     AmountLineEdit,
     ElidedLabel,
+    HoverCard,
+    clear_crossfade,
     format_money,
     image_to_jpeg,
     parse_amount,
@@ -734,19 +736,26 @@ class MarketChart(QWidget):
 
     # ------------------------------------------------------------------- paint
     def _palette(self) -> dict[str, QColor]:
-        light = theme.active_theme() == "light"
-        accent = theme.theme_accent(self._accent, theme.active_theme())
+        name = theme.active_theme()
+        tokens = design.tokens(name)
+        light = name == "light"
+        accent = theme.theme_accent(self._accent, name)
+        grid = QColor(tokens.border)
+        grid.setAlpha(70 if not light else 55)
+        tooltip = QColor(tokens.panel)
+        tooltip.setAlpha(246)
         return {
-            "text": QColor("#33383F" if light else "#D9DDE2"),
-            "muted": QColor("#7A818B" if light else "#8C929A"),
-            "grid": QColor(0, 0, 0, 16) if light else QColor(255, 255, 255, 18),
+            "text": QColor(tokens.text_soft),
+            "muted": QColor(tokens.muted),
+            "grid": grid,
             "line": accent,
             "bar": QColor(accent.red(), accent.green(), accent.blue(), 60),
             "bar_edge": QColor(accent.red(), accent.green(), accent.blue(), 105),
-            "tooltip": QColor(255, 255, 255, 246) if light else QColor(22, 25, 29, 246),
-            "tooltip_edge": QColor(0, 0, 0, 30) if light else QColor(255, 255, 255, 34),
-            "good": QColor("#1E8E4E" if light else "#67E396"),
-            "bad": QColor("#C0392B" if light else "#FF8D8D"),
+            "tooltip": tooltip,
+            "tooltip_edge": QColor(tokens.border),
+            "dot_edge": QColor(tokens.panel),
+            "good": QColor(tokens.profit),
+            "bad": QColor(tokens.loss),
         }
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -757,7 +766,7 @@ class MarketChart(QWidget):
 
         if not self._series:
             painter.setPen(colors["muted"])
-            painter.setFont(QFont("Segoe UI", 9))
+            painter.setFont(design.app_font(9))
             painter.drawText(
                 self.rect(), Qt.AlignmentFlag.AlignCenter, self._message
             )
@@ -777,7 +786,7 @@ class MarketChart(QWidget):
         ]
         if not prices:
             painter.setPen(colors["muted"])
-            painter.setFont(QFont("Segoe UI", 9))
+            painter.setFont(design.app_font(9))
             painter.drawText(
                 self.rect(), Qt.AlignmentFlag.AlignCenter, "Нет цен за период"
             )
@@ -808,7 +817,7 @@ class MarketChart(QWidget):
             return top + (1 - value / (max_sold * 1.08)) * plot_h
 
         # ---------------------------------------------------- сетка и подписи
-        grid_font = QFont("Segoe UI", 8)
+        grid_font = design.app_font(8)
         painter.setFont(grid_font)
         for index in range(5):
             value = low + (high - low) * index / 4
@@ -882,7 +891,7 @@ class MarketChart(QWidget):
 
             last = points[-1]
             painter.setBrush(colors["line"])
-            painter.setPen(QPen(QColor("#0B0D10"), 2))
+            painter.setPen(QPen(colors["dot_edge"], 2))
             painter.drawEllipse(last, 3.6, 3.6)
 
         # ------------------------------------------------------- подписи по X
@@ -915,7 +924,7 @@ class MarketChart(QWidget):
             )
             if not point["empty"] and point["avg"]:
                 painter.setBrush(colors["line"])
-                painter.setPen(QPen(QColor("#0B0D10"), 2))
+                painter.setPen(QPen(colors["dot_edge"], 2))
                 painter.drawEllipse(
                     QPointF(hx, y_price(point["avg"])), 4.0, 4.0
                 )
@@ -936,7 +945,7 @@ class MarketChart(QWidget):
         painter.setBrush(colors["tooltip"])
         painter.drawRoundedRect(QRectF(left, top, box_w, box_h), 9, 9)
 
-        painter.setFont(QFont("Segoe UI", 8))
+        painter.setFont(design.app_font(8))
         painter.setPen(colors["muted"])
         painter.drawText(
             QRectF(left + 12, top + 8, box_w - 24, 16),
@@ -946,7 +955,7 @@ class MarketChart(QWidget):
 
         if point["empty"]:
             painter.setPen(colors["text"])
-            painter.setFont(QFont("Segoe UI", 10))
+            painter.setFont(design.app_font(10))
             painter.drawText(
                 QRectF(left + 12, top + 30, box_w - 24, 40),
                 Qt.AlignmentFlag.AlignLeft,
@@ -954,7 +963,9 @@ class MarketChart(QWidget):
             )
             return
 
-        painter.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        tooltip_title_font = design.app_font(12)
+        tooltip_title_font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(tooltip_title_font)
         painter.setPen(colors["text"])
         painter.drawText(
             QRectF(left + 12, top + 26, box_w - 24, 22),
@@ -969,7 +980,7 @@ class MarketChart(QWidget):
             ("Δ к пред. дню", _delta_text(point["delta"]), _delta_color(point["delta"], colors)),
         )
         y = top + 58
-        painter.setFont(QFont("Segoe UI", 8))
+        painter.setFont(design.app_font(8))
         for caption, value, color in rows:
             painter.setPen(colors["muted"])
             painter.drawText(
@@ -1076,7 +1087,7 @@ class MarketThumb(QLabel):
         super().mousePressEvent(event)
 
 
-class MarketRow(QFrame):
+class MarketRow(HoverCard):
     clicked = Signal(object)
     zoomRequested = Signal(object)
 
@@ -1133,6 +1144,11 @@ class MarketRow(QFrame):
         )
         right.addWidget(sold)
         layout.addLayout(right)
+
+    def _hover_palette(self) -> tuple[str, str, float]:
+        theme_name = theme.active_theme()
+        tokens = design.tokens(theme_name)
+        return tokens.card, tokens.card_hover, float(design.RADIUS["row"])
 
     def set_image(self, image: QImage) -> None:
         if image.isNull():
@@ -1672,8 +1688,16 @@ class MarketDetail(QWidget):
         self._trade_own.set_full_text(text)
 
     # ------------------------------------------------------------------- data
+    def showEvent(self, event) -> None:  # noqa: N802
+        # Страница детали переиспользуется для всех товаров. Прокрутка от
+        # предыдущего товара не должна попасть даже в первый кадр, иначе на
+        # месте контейнера сделки успевает мелькнуть график с ценами.
+        super().showEvent(event)
+        self.scroll_area.verticalScrollBar().setValue(0)
+
     def set_entry(self, entry: MarketEntry) -> None:
         self._entry = entry
+        self.scroll_area.verticalScrollBar().setValue(0)
         self._image = None
         self._thumb_pixmap = None
         self._thumb.set_zoomable(False)
@@ -2140,6 +2164,10 @@ class MarketPanel(QWidget):
         self._current = entry
         self.detail.set_entry(entry)
         self._refresh_own_stats()
+        # Страница товара показывается сразу, без плавного перехода: снимок
+        # списка успевал лечь поверх уже нарисованной страницы, и на миг
+        # мелькали её цены и график. Мгновенный переход такого кадра не даёт.
+        clear_crossfade(self.stack)
         self.stack.setCurrentWidget(self.detail)
         self._load_image(entry.image, self.detail.set_image, entry.image_alt)
 
@@ -2231,7 +2259,8 @@ class MarketPanel(QWidget):
 
     def _show_list(self) -> None:
         self._current = None
-        self.stack.setCurrentIndex(0)
+        clear_crossfade(self.stack)
+        self.stack.setCurrentWidget(self.stack.widget(0))
         self.search.setFocus()
 
     # ------------------------------------------------------------------- theme

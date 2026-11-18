@@ -52,6 +52,20 @@ def _draw_trash(p: QPainter) -> None:
     p.drawLine(14.0, 10.2, 14.0, 17.0)
 
 
+def _draw_copy(p: QPainter) -> None:
+    p.drawRoundedRect(QRectF(8.0, 4.0, 11.5, 13.5), 2.4, 2.4)
+    path = QPainterPath()
+    path.moveTo(6.0, 7.0)
+    path.lineTo(4.8, 7.0)
+    path.quadTo(4.0, 7.0, 4.0, 7.8)
+    path.lineTo(4.0, 19.2)
+    path.quadTo(4.0, 20.0, 4.8, 20.0)
+    path.lineTo(15.2, 20.0)
+    path.quadTo(16.0, 20.0, 16.0, 19.2)
+    path.lineTo(16.0, 18.2)
+    p.drawPath(path)
+
+
 def _draw_pencil(p: QPainter) -> None:
     path = QPainterPath()
     path.moveTo(4.0, 20.0)
@@ -165,6 +179,7 @@ _DRAWERS = {
     "calendar": _draw_calendar,
     "refresh": _draw_refresh,
     "trash": _draw_trash,
+    "copy": _draw_copy,
     "pencil": _draw_pencil,
     "plus": _draw_plus,
     "minus": _draw_minus,

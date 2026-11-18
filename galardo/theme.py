@@ -1,212 +1,280 @@
+"""Galardo theme: QSS generated from the central design tokens.
+
+Public API kept for the rest of the application and the test-suite:
+``stylesheet``, ``palette``, ``theme_accent``, ``contrast_text``,
+``ACCENTS``, ``THEMES``, ``icon_tone``, ``set_active_theme``.
+
+All colours, radii and type sizes come from :mod:`galardo.design`; there are
+no per-widget colour overrides.
+"""
+
 from __future__ import annotations
+
+import re
 
 from PySide6.QtGui import QColor, QPalette
 
-BASE_QSS = r"""
+from . import design
+
+DEFAULT_THEME = "dark"
+DEFAULT_ACCENT = design.DEFAULT_ACCENT
+ACCENTS: dict[str, tuple[str, str]] = dict(design.ACCENTS)
+THEMES: dict[str, str] = {
+    "dark": "Чёрная",
+    "light": "Белая",
+}
+
+_ACTIVE_THEME = DEFAULT_THEME
+
+
+# ----------------------------------------------------------------------- QSS
+QSS_TEMPLATE = r"""
+/* --------------------------------------------------------------- foundations */
 QWidget {
-    color: #E7E9EC;
-    font-family: "Segoe UI";
-    font-size: 13px;
+    color: @TEXT@;
+    font-family: "@FONT@";
+    font-size: @FS_BODY@px;
 }
 QLabel {
     background-color: transparent;
 }
 
-/* ------------------------------------------------------------------ panels */
+/* -------------------------------------------------------------------- panels */
 QFrame#Panel {
-    background-color: rgba(9, 10, 12, 188);
-    border: 1px solid rgba(255, 255, 255, 20);
-    border-radius: 14px;
-}
-QLabel#FieldLabel {
-    color: #878D96;
-    font-size: 12px;
+    background: qlineargradient(x1: 0, y1: 0, x2: 0.3, y2: 1, stop: 0 @PANEL_GLOW@, stop: 0.62 @PANEL_TOP@, stop: 1 @PANEL@);
+    border: 1px solid @BORDER@;
+    border-radius: @R_PANEL@px;
 }
 QLabel#AppTitle {
-    color: #F4F5F7;
-    font-size: 15px;
+    color: @TEXT@;
+    font-size: @FS_SUBTITLE@px;
     font-weight: 600;
 }
+QWidget#CrossfadeOverlay {
+    background: transparent;
+    border: none;
+}
+QFrame#TopStats {
+    background-color: @SURFACE_SOFT@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_ROW@px;
+}
+QLabel#TopStatValue {
+    color: @TEXT@;
+    font-size: @FS_SUBTITLE@px;
+    font-weight: 700;
+}
+QLabel#TopStatValue[state="positive"] { color: @PROFIT@; }
+QLabel#TopStatValue[state="negative"] { color: @LOSS@; }
+QLabel#TopStatLabel {
+    color: @FAINT@;
+    font-size: @FS_MICRO@px;
+    font-weight: 500;
+}
+QFrame#TopDivider {
+    background-color: @BORDER@;
+    border: none;
+    border-radius: 0px;
+}
+QLabel#PanelTitle {
+    color: @TEXT@;
+    font-size: @FS_DISPLAY@px;
+    font-weight: 700;
+}
+QLabel#PanelSubtitle {
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
+}
+QWidget#FormContent { background-color: transparent; }
+QFrame#Divider {
+    background-color: @BORDER_SOFT@;
+    border: none;
+    border-radius: 0px;
+}
+QLabel#FieldLabel {
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
+    font-weight: 500;
+}
+QLabel#SectionHeader {
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
+    font-weight: 600;
+    padding: 2px 0px 6px 0px;
+}
 QLabel#HistoryPill {
-    background-color: rgba(255, 255, 255, 7);
-    border: 1px solid rgba(255, 255, 255, 24);
-    border-radius: 8px;
+    background-color: @PILL_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_TAB@px;
     padding: 7px 14px;
-    color: #ECEFF2;
-    font-size: 12px;
+    color: @TEXT_SOFT@;
+    font-size: @FS_LABEL@px;
     font-weight: 600;
 }
 QLabel#CountMuted {
-    color: #6C727B;
-    font-size: 11px;
+    color: @FAINT@;
+    font-size: @FS_CAPTION@px;
 }
 QPushButton#Tab {
     background-color: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
-    padding: 6px 11px;
-    color: #868C95;
-    font-size: 12px;
+    border-radius: @R_TAB@px;
+    padding: 7px 12px;
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
     font-weight: 600;
 }
 QPushButton#Tab:hover {
-    background-color: rgba(255, 255, 255, 6);
-    color: #E7E9EC;
+    background-color: @SURFACE_SOFT@;
+    border-color: @ACCENT_BORDER_SOFT@;
+    color: @TEXT@;
 }
 QPushButton#Tab:checked {
-    background-color: rgba(255, 255, 255, 9);
-    border-color: rgba(255, 255, 255, 26);
-    color: #F2F4F6;
+    background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 @ACCENT_SOFT_STRONG@, stop: 0.55 @ACCENT_SOFT@, stop: 1 @ACCENT_GLOW@);
+    border-color: @ACCENT_BORDER_SOFT@;
+    color: @ACCENT_TEXT@;
+    font-weight: 700;
 }
 QFrame#WeekHeader {
-    background-color: rgba(255, 255, 255, 4);
-    border: 1px solid rgba(255, 255, 255, 11);
-    border-radius: 8px;
+    background-color: @HEADER_BG@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_HEADER@px;
 }
 QFrame#WeekHeader:hover {
-    background-color: rgba(255, 255, 255, 8);
+    background-color: @HEADER_HOVER@;
+    border-color: @BORDER@;
 }
-QLabel#WeekChevron {
-    color: #8C929A;
-    font-size: 11px;
-}
-QLabel#WeekTitle {
-    color: #C6CBD2;
-    font-size: 12px;
-    font-weight: 600;
-}
-QLabel#WeekMeta {
-    color: #6B717A;
-    font-size: 11px;
-}
+QLabel#WeekChevron { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#WeekNumber { color: @TEXT@; font-size: @FS_BODY@px; font-weight: 700; }
+QLabel#WeekRange { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#WeekMeta { color: @FAINT@; font-size: @FS_CAPTION@px; }
 QLabel#WeekAmount {
-    color: #A6ABB3;
-    font-size: 12px;
-    font-weight: 600;
+    color: @MUTED@;
+    font-size: @FS_BODY@px;
+    font-weight: 700;
 }
+QLabel#WeekAmount[state="positive"] { color: @PROFIT@; }
+QLabel#WeekAmount[state="negative"] { color: @LOSS@; }
+QWidget#WeekBody { background: transparent; }
 QLabel#DragHandle {
     background-color: transparent;
-    border-radius: 4px;
+    border-radius: @R_BADGE@px;
 }
-QLabel#DragHandle:hover {
-    background-color: rgba(255, 255, 255, 14);
+QLabel#DragHandle:hover { background-color: @SURFACE@; }
+QLabel#DragHandle:pressed { background-color: @SURFACE_HOVER@; }
+QFrame#PairCard {
+    background-color: @PAIR_BG@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_CARD@px;
 }
+QFrame#PairCard:hover { border-color: @BORDER@; }
+QFrame#PairStrip {
+    border: none;
+    background-color: @BORDER@;
+}
+QFrame#PairStrip[state="positive"] { background-color: @PROFIT@; }
+QFrame#PairStrip[state="negative"] { background-color: @LOSS@; }
+QWidget#PairContent { background: transparent; }
 QFrame#PairHeader {
-    background-color: rgba(255, 255, 255, 6);
-    border: 1px solid rgba(255, 255, 255, 18);
-    border-radius: 8px;
+    background-color: transparent;
+    border: none;
+    border-radius: 0px;
 }
-QFrame#PairHeader:hover {
-    background-color: rgba(255, 255, 255, 11);
-}
-QLabel#PairChevron {
-    color: #8C929A;
-    font-size: 11px;
-}
-QLabel#PairTitle {
-    color: #F1F3F5;
-    font-size: 13px;
-    font-weight: 600;
-}
-QLabel#PairMeta {
-    color: #8A9099;
-    font-size: 11px;
-}
+QFrame#PairHeader:hover { background-color: transparent; }
+QFrame#PairHeader:hover QLabel#PairTitle { color: @ACCENT@; }
+QFrame#PairHeader:hover QLabel#PairChevron { color: @TEXT_SOFT@; }
+QLabel#PairChevron { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#PairTitle { color: @TEXT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
 QLabel#PairProfit {
-    color: #A6ABB3;
-    font-size: 12px;
-    font-weight: 600;
+    color: @MUTED@;
+    font-size: @FS_DISPLAY@px;
+    font-weight: 700;
 }
-QLabel#PairProfit[state="positive"] {
-    color: #67E396;
-}
-QLabel#PairProfit[state="negative"] {
-    color: #FF8D8D;
-}
+QLabel#PairProfit[state="positive"] { color: @PROFIT@; }
+QLabel#PairProfit[state="negative"] { color: @LOSS@; }
+QLabel#PairBuy { color: @TEXT_SOFT@; font-size: @FS_CAPTION@px; }
+QLabel#PairSell { color: @TEXT_SOFT@; font-size: @FS_CAPTION@px; }
+QLabel#PairDate { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QLabel#PairMeta { color: @TEXT_SOFT@; font-size: @FS_CAPTION@px; }
+QLabel#PairMetaDot { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QWidget#PairBody { background: transparent; }
 QFrame#DropLine {
     background-color: @ACCENT@;
     border: none;
     border-radius: 1px;
 }
-QLabel#DealTitle {
-    color: #F1F3F5;
-    font-size: 14px;
-    font-weight: 600;
+QLabel#DealTitle { color: @TEXT@; font-size: @FS_BODY@px; font-weight: 600; }
+QLabel#DealCategory { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#DealMetaDot { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QLabel#DealDate { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QLabel#DealComment { color: @MUTED@; font-size: @FS_CAPTION@px; font-style: italic; }
+QLabel#DealThumb {
+    background-color: @SURFACE_SOFT@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_ROW@px;
 }
-QLabel#DealDate {
-    color: #6B717A;
-    font-size: 13px;
-}
-QLabel#DealComment {
-    color: #A6ABB3;
-    font-size: 12px;
-    font-style: italic;
-}
-QLabel#EmptyTitle {
-    color: #D5D8DD;
-    font-size: 14px;
-    font-weight: 600;
-}
-QLabel#EmptyHint {
-    color: #6C727B;
-    font-size: 12px;
-}
-QLabel#PhotoTitle {
-    color: #D9DCE1;
-    font-size: 12px;
-}
-QLabel#PhotoHint {
-    color: #6D737C;
-    font-size: 11px;
-}
+QLabel#EmptyTitle { color: @TEXT_SOFT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
+QLabel#EmptyHint { color: @MUTED@; font-size: @FS_LABEL@px; }
+QLabel#PhotoTitle { color: @TEXT_SOFT@; font-size: @FS_LABEL@px; font-weight: 500; }
+QLabel#PhotoHint { color: @FAINT@; font-size: @FS_CAPTION@px; }
 QLabel#PhotoIcon {
-    background-color: rgba(255, 255, 255, 7);
-    border: 1px solid rgba(255, 255, 255, 12);
-    border-radius: 10px;
+    background-color: @SURFACE_SOFT@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_ICON@px;
 }
-QLabel#Muted {
-    color: #7B818A;
-    font-size: 12px;
-}
-QLabel#PopupTitle {
-    color: #F1F3F5;
-    font-size: 14px;
-    font-weight: 600;
-}
+QLabel#Muted { color: @MUTED@; font-size: @FS_LABEL@px; }
+QLabel#PopupTitle { color: @TEXT@; font-size: @FS_TITLE@px; font-weight: 600; }
 QLabel#PopupSection {
-    color: #878D96;
-    font-size: 11px;
+    color: @MUTED@;
+    font-size: @FS_CAPTION@px;
     font-weight: 600;
 }
-QLabel#PopupHint {
-    color: #6C727B;
-    font-size: 11px;
+QLabel#PopupHint { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QFrame#AccentPreview {
+    background-color: @SURFACE_SOFT@;
+    border: 1px solid @ACCENT_BORDER_SOFT@;
+    border-radius: @R_ROW@px;
+}
+QLabel#AccentPreviewDot {
+    background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 @ACCENT_GRADIENT_FROM@, stop: 1 @ACCENT_GRADIENT_TO@);
+    border: 1px solid @ACCENT_BORDER_SOFT@;
+    border-radius: 7px;
+}
+QLabel#AccentPreviewLabel { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#AccentPreviewValue {
+    color: @ACCENT@;
+    font-size: @FS_CAPTION@px;
+    font-weight: 600;
 }
 
-/* ------------------------------------------------------------------ inputs */
+/* -------------------------------------------------------------------- fields */
 QLineEdit, QTextEdit, QComboBox, QSpinBox {
-    background-color: rgba(13, 15, 19, 208);
-    border: 1px solid #2E333A;
-    border-radius: 9px;
-    padding: 8px 11px;
-    color: #E9EBEE;
-    font-size: 13px;
+    background-color: @INPUT_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_FIELD@px;
+    padding: 9px 12px;
+    color: @TEXT@;
+    font-size: @FS_BODY@px;
     selection-background-color: @ACCENT@;
     selection-color: @ON_ACCENT@;
 }
+QLineEdit:hover, QTextEdit:hover, QComboBox:hover, QSpinBox:hover {
+    border-color: @BORDER_STRONG@;
+}
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {
     border: 1px solid @ACCENT@;
-    background-color: rgba(17, 20, 25, 228);
+    background-color: @INPUT_FOCUS@;
 }
 QLineEdit[error="true"], QTextEdit[error="true"] {
-    border: 1px solid #D95C5C;
+    border: 1px solid @LOSS@;
 }
-QTextEdit {
-    padding: 8px 10px;
+QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+    color: @FAINT@;
+    border-color: @BORDER_SOFT@;
+    background-color: @SURFACE_SOFT@;
 }
-QComboBox {
-    padding-right: 32px;
-}
+QTextEdit { padding: 9px 11px; }
+QComboBox { padding-right: 34px; }
 QComboBox::drop-down {
     border: none;
     width: 30px;
@@ -217,337 +285,363 @@ QComboBox::down-arrow {
     height: 14px;
 }
 QComboBox QAbstractItemView {
-    background-color: #14171B;
-    border: 1px solid #2D3239;
-    border-radius: 8px;
-    color: #E9EBEE;
-    selection-background-color: #242B36;
-    selection-color: #FFFFFF;
-    padding: 5px;
+    background-color: @PANEL@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_FIELD@px;
+    color: @TEXT@;
+    selection-background-color: @SURFACE_HOVER@;
+    selection-color: @TEXT@;
+    padding: 6px;
     outline: 0;
 }
 QComboBox QAbstractItemView::item {
-    min-height: 26px;
-    padding-left: 7px;
+    min-height: 28px;
+    padding-left: 8px;
+    border-radius: @R_CHIP@px;
 }
 
-/* ----------------------------------------------------------------- buttons */
+/* ------------------------------------------------------------------- buttons */
 QPushButton {
-    background-color: #1A1D22;
-    border: 1px solid #2E333A;
-    border-radius: 8px;
+    background-color: @BTN_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_BUTTON@px;
     padding: 8px 14px;
-    color: #E9EBEE;
+    color: @TEXT_SOFT@;
+    font-size: @FS_BODY@px;
+    font-weight: 500;
 }
 QPushButton:hover {
-    background-color: #23272D;
+    background-color: @BTN_HOVER@;
+    border-color: @ACCENT_BORDER_SOFT@;
+    color: @TEXT@;
 }
-QPushButton:pressed {
-    background-color: #171A1E;
+QPushButton:pressed { background-color: @BTN_PRESSED@; }
+QPushButton:disabled {
+    background-color: transparent;
+    border-color: @BORDER_SOFT@;
+    color: @FAINT@;
 }
-QPushButton#Submit {
-    background-color: @ACCENT_SOFT@;
-    border: 1px solid @ACCENT@;
-    border-radius: 9px;
+QPushButton#Submit, QPushButton#Primary {
+    background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 @ACCENT_GRADIENT_FROM@, stop: 1 @ACCENT_GRADIENT_TO@);
+    border: 1px solid @SUBMIT_BORDER@;
+    border-radius: @R_BUTTON@px;
     padding: 11px;
-    font-size: 13px;
+    font-size: @FS_BODY@px;
     font-weight: 600;
-    color: #F2F4F6;
+    color: @SUBMIT_TEXT@;
 }
-QPushButton#Submit:hover {
-    background-color: @ACCENT_SOFT_STRONG@;
-    border-color: @ACCENT@;
+QPushButton#Submit:hover, QPushButton#Primary:hover {
+    background-color: @SUBMIT_HOVER@;
+    border-color: @SUBMIT_BORDER@;
+    color: @SUBMIT_TEXT@;
 }
-QPushButton#Submit:pressed {
-    background-color: @ACCENT_SOFT@;
+QPushButton#Submit:pressed, QPushButton#Primary:pressed {
+    background-color: @SUBMIT_PRESSED@;
 }
 QPushButton#Ghost {
     background-color: transparent;
-    border: 1px solid rgba(255, 255, 255, 26);
-    border-radius: 8px;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: @R_BUTTON@px;
     padding: 9px 12px;
-    color: #B9BEC6;
-    font-size: 12px;
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
 }
 QPushButton#Ghost:hover {
-    background-color: rgba(255, 255, 255, 7);
-    color: #E9EBEE;
+    background-color: @SURFACE_SOFT@;
+    border-color: @BORDER_STRONG@;
+    color: @TEXT@;
 }
 QPushButton#Chip {
-    background-color: rgba(8, 9, 11, 80);
-    border: 1px solid rgba(255, 255, 255, 29);
-    border-radius: 7px;
+    background-color: @CHIP_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_CHIP@px;
     padding: 5px 10px;
-    font-size: 11px;
-    color: #D5D9DE;
+    font-size: @FS_CAPTION@px;
+    font-weight: 500;
+    color: @TEXT_SOFT@;
 }
 QPushButton#Chip:hover {
-    background-color: rgba(255, 255, 255, 11);
-    border-color: rgba(255, 255, 255, 48);
+    background-color: @SURFACE@;
+    border-color: @ACCENT_BORDER_SOFT@;
+    color: @TEXT@;
 }
 QPushButton#PopupGhost {
     background-color: transparent;
-    border: 1px solid rgba(255, 255, 255, 24);
-    border-radius: 8px;
+    border: 1px solid @BORDER@;
+    border-radius: @R_TAB@px;
     padding: 7px 12px;
-    color: #B9BEC6;
-    font-size: 12px;
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
+    font-weight: 500;
 }
 QPushButton#PopupGhost:hover {
-    background-color: rgba(255, 255, 255, 7);
+    background-color: @SURFACE_SOFT@;
+    border-color: @BORDER_STRONG@;
+    color: @TEXT@;
 }
 QPushButton#PopupGhost:checked {
-    background-color: rgba(255, 255, 255, 13);
-    border-color: rgba(255, 255, 255, 72);
-    color: #F3F5F7;
+    background-color: @ACCENT_SOFT@;
+    border-color: @ACCENT_BORDER_SOFT@;
+    color: @ACCENT_TEXT@;
+}
+QPushButton#PopupGhost:disabled {
+    background-color: transparent;
+    border-color: @BORDER_SOFT@;
+    color: @FAINT@;
 }
 QPushButton#PopupPrimary {
-    background-color: #EDEFF2;
-    border: 1px solid #EDEFF2;
-    border-radius: 8px;
-    padding: 7px 16px;
-    color: #101215;
-    font-size: 12px;
+    background-color: @PRIMARY_BG@;
+    border: 1px solid @PRIMARY_BG@;
+    border-radius: @R_TAB@px;
+    padding: 8px 16px;
+    color: @PRIMARY_TEXT@;
+    font-size: @FS_LABEL@px;
     font-weight: 600;
 }
-QPushButton#PopupPrimary:hover {
-    background-color: #FFFFFF;
-}
+QPushButton#PopupPrimary:hover { background-color: @PRIMARY_HOVER@; }
 QPushButton#Danger {
-    color: #FF9C9C;
-    border-color: rgba(214, 92, 92, 90);
+    background-color: transparent;
+    color: @LOSS@;
+    border-color: @LOSS_BORDER@;
 }
-QPushButton#Danger:hover {
-    background-color: rgba(214, 92, 92, 40);
-}
+QPushButton#Danger:hover { background-color: @LOSS_TINT@; }
 
 QToolButton {
     background-color: transparent;
-    border: none;
-    border-radius: 6px;
+    border: 1px solid transparent;
+    border-radius: @R_ICON@px;
     padding: 3px;
 }
 QToolButton:hover {
-    background-color: rgba(255, 255, 255, 13);
+    background-color: @SURFACE@;
+    border-color: @ACCENT_BORDER_SOFT@;
 }
-QToolButton:pressed {
-    background-color: rgba(255, 255, 255, 7);
+QToolButton:pressed { background-color: @SURFACE_HOVER@; }
+QToolButton#IconBtn {
+    border-radius: @R_ICON@px;
+    padding: 0px;
+}
+QToolButton#IconBtn:hover {
+    background-color: @SURFACE@;
+    border-color: @ACCENT_BORDER_SOFT@;
 }
 QToolButton#WinBtn {
-    border-radius: 7px;
+    border-radius: @R_ICON@px;
     padding: 0px;
 }
-QToolButton#WinBtn:hover {
-    background-color: rgba(255, 255, 255, 14);
-}
+QToolButton#WinBtn:hover { background-color: @SURFACE@; }
 QToolButton#WinClose {
-    border-radius: 7px;
+    border-radius: @R_ICON@px;
     padding: 0px;
 }
-QToolButton#WinClose:hover {
-    background-color: #D94147;
-}
+QToolButton#WinClose:hover { background-color: @DANGER@; }
 QToolButton#OverlayClose {
-    background-color: rgba(255, 255, 255, 18);
-    border: 1px solid rgba(255, 255, 255, 30);
+    background-color: @SURFACE_TRANSLUCENT@;
+    border: 1px solid @BORDER@;
     border-radius: 16px;
 }
-QToolButton#OverlayClose:hover {
-    background-color: rgba(255, 255, 255, 30);
-}
+QToolButton#OverlayClose:hover { background-color: @SURFACE_HOVER@; }
 
-/* ------------------------------------------------------------------ photo */
+/* --------------------------------------------------------------------- photo */
 QFrame#PhotoDrop {
-    background-color: rgba(255, 255, 255, 3);
-    border: 1px solid #30363D;
-    border-radius: 10px;
+    background-color: @INPUT_BG@;
+    border: 1px dashed @BORDER_STRONG@;
+    border-radius: @R_ROW@px;
 }
 QFrame#PhotoDrop:hover {
-    background-color: rgba(255, 255, 255, 6);
-    border-color: #4A525C;
+    background-color: @SURFACE_SOFT@;
+    border-color: @ACCENT@;
 }
 QFrame#PhotoDrop[filled="true"] {
-    background-color: rgba(255, 255, 255, 5);
-    border: 1px solid #30363D;
+    background-color: @SURFACE_SOFT@;
+    border: 1px solid @BORDER@;
 }
 
-/* ------------------------------------------------------------------ cards */
-QFrame#DealCard {
-    border-radius: 10px;
+/* --------------------------------------------------------------------- cards */
+QFrame#DealCard, QFrame#TransactionCard {
+    background-color: @CARD@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_CARD@px;
 }
-QFrame#DealCard[side="buy"] {
-    background-color: rgba(82, 32, 34, 140);
-    border: 1px solid rgba(211, 94, 94, 46);
+QFrame#DealCard:hover, QFrame#TransactionCard:hover {
+    background-color: @CARD_HOVER@;
+    border-color: @BORDER@;
 }
-QFrame#DealCard[side="buy"]:hover {
-    background-color: rgba(92, 38, 40, 166);
+QFrame#DealCard[side="buy"] { border-left: 2px solid @LOSS_BORDER@; }
+QFrame#DealCard[side="sell"] { border-left: 2px solid @PROFIT_BORDER@; }
+QFrame#DealCard[embedded="true"] {
+    background-color: @EMBED_BG@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_ROW@px;
 }
-QFrame#DealCard[side="sell"] {
-    background-color: rgba(25, 62, 41, 140);
-    border: 1px solid rgba(86, 191, 122, 42);
+QFrame#DealCard[embedded="true"]:hover {
+    background-color: @EMBED_HOVER@;
+    border-color: @BORDER@;
 }
-QFrame#DealCard[side="sell"]:hover {
-    background-color: rgba(30, 72, 48, 166);
+QFrame#TransactionCard[side="buy"] {
+    background-color: @BUY_BG@;
+    border: 1px solid @BUY_BORDER@;
 }
-QLabel#BadgeBuy {
-    background-color: rgba(255, 110, 110, 34);
-    color: #FF9D9D;
-    border-radius: 5px;
-    padding: 3px 7px;
-    font-size: 11px;
+QFrame#TransactionCard[side="sell"] {
+    background-color: @SELL_BG@;
+    border: 1px solid @SELL_BORDER@;
+}
+QLabel#BadgeBuy, QLabel#Badge {
+    background-color: @LOSS_BADGE@;
+    color: @LOSS@;
+    border: 1px solid @LOSS_BORDER@;
+    border-radius: @R_BADGE@px;
+    padding: 3px 8px;
+    font-size: @FS_MICRO@px;
     font-weight: 600;
 }
-QLabel#BadgeSell {
-    background-color: rgba(95, 224, 145, 32);
-    color: #72E6A0;
-    border-radius: 5px;
-    padding: 3px 7px;
-    font-size: 11px;
+QLabel#BadgeSell, QLabel#Badge[tone="profit"] {
+    background-color: @PROFIT_BADGE@;
+    color: @PROFIT@;
+    border: 1px solid @PROFIT_BORDER@;
+    border-radius: @R_BADGE@px;
+    padding: 3px 8px;
+    font-size: @FS_MICRO@px;
     font-weight: 600;
 }
-QLabel#AmountBuy {
-    color: #FF8D8D;
-    font-size: 14px;
-    font-weight: 600;
+QLabel#Badge[tone="accent"] {
+    background-color: @ACCENT_SOFT@;
+    color: @ACCENT_TEXT@;
+    border: 1px solid @ACCENT_BORDER_SOFT@;
 }
-QLabel#AmountSell {
-    color: #67E396;
-    font-size: 14px;
-    font-weight: 600;
+QLabel#Badge[tone="muted"] {
+    background-color: @SURFACE_SOFT@;
+    color: @MUTED@;
+    border: 1px solid @BORDER@;
 }
+QLabel#AmountBuy { color: @LOSS@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
+QLabel#AmountSell { color: @PROFIT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
 
-/* ------------------------------------------------------------------- total */
+/* --------------------------------------------------------------------- total */
 QFrame#TotalBar {
-    background-color: rgba(255, 255, 255, 4);
-    border: 1px solid rgba(255, 255, 255, 14);
-    border-radius: 10px;
+    background-color: @TOTAL_BG@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: @R_CARD@px;
 }
 QFrame#TotalBar[state="negative"] {
-    background-color: rgba(92, 33, 35, 150);
-    border: 1px solid rgba(214, 92, 92, 52);
+    background-color: @TOTAL_NEG_BG@;
+    border: 1px solid @LOSS_BORDER@;
 }
 QFrame#TotalBar[state="positive"] {
-    background-color: rgba(26, 68, 44, 150);
-    border: 1px solid rgba(86, 191, 122, 44);
+    background-color: @TOTAL_POS_BG@;
+    border: 1px solid @PROFIT_BORDER@;
 }
 QLabel#TotalCaption {
-    color: #C4C8CE;
-    font-size: 12px;
+    color: @MUTED@;
+    font-size: @FS_BODY@px;
     font-weight: 600;
 }
-QLabel#TotalValue {
-    color: #D9DCE1;
-    font-size: 15px;
-    font-weight: 700;
-}
-QLabel#TotalValue[state="negative"] {
-    color: #FF8D8D;
-}
-QLabel#TotalValue[state="positive"] {
-    color: #67E396;
-}
+QLabel#TotalValue { color: @TEXT@; font-size: @FS_TITLE@px; font-weight: 700; }
+QLabel#TotalValue[state="negative"] { color: @LOSS@; }
+QLabel#TotalValue[state="positive"] { color: @PROFIT@; }
 
-/* ------------------------------------------------------------------ market */
+/* -------------------------------------------------------------------- market */
 QFrame#MarketRow {
-    background-color: rgba(255, 255, 255, 4);
-    border: 1px solid rgba(255, 255, 255, 8);
-    border-radius: 10px;
+    background-color: @CARD@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_ROW@px;
 }
 QFrame#MarketRow:hover {
-    background-color: rgba(255, 255, 255, 9);
-    border-color: rgba(255, 255, 255, 22);
+    background-color: @CARD_HOVER@;
+    border-color: @ACCENT_BORDER_SOFT@;
 }
 QLabel#MarketThumb {
-    background-color: rgba(255, 255, 255, 6);
-    border: 1px solid rgba(255, 255, 255, 12);
-    border-radius: 9px;
-    color: #C6CBD2;
+    background-color: @SURFACE_SOFT@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_CHIP@px;
+    color: @TEXT_SOFT@;
     font-weight: 600;
 }
-QLabel#MarketName { color: #E9EBEE; font-size: 13px; font-weight: 600; }
-QLabel#MarketMeta { color: #6C727B; font-size: 11px; }
-QLabel#MarketPrice { color: #E9EBEE; font-size: 12px; font-weight: 600; }
-QLabel#MarketSold { color: #6C727B; font-size: 11px; }
+QLabel#MarketName { color: @TEXT@; font-size: @FS_BODY@px; font-weight: 600; }
+QLabel#MarketMeta { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QLabel#MarketPrice { color: @TEXT@; font-size: @FS_LABEL@px; font-weight: 600; }
+QLabel#MarketSold { color: @FAINT@; font-size: @FS_CAPTION@px; }
 QFrame#MarketCard {
-    background-color: rgba(255, 255, 255, 3);
-    border: 1px solid rgba(255, 255, 255, 12);
-    border-radius: 12px;
+    background-color: @CARD@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_CARD_LARGE@px;
 }
 QFrame#MarketStat {
-    background-color: rgba(255, 255, 255, 4);
-    border: 1px solid rgba(255, 255, 255, 12);
-    border-radius: 10px;
+    background-color: @STAT_BG@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_ROW@px;
 }
 QFrame#MarketStat[highlight="true"] {
     background-color: @ACCENT_SOFT@;
-    border-color: @ACCENT@;
+    border-color: @ACCENT_BORDER_SOFT@;
 }
-QLabel#StatLabel { color: #7B818A; font-size: 11px; }
-QLabel#StatValue { color: #F1F3F5; font-size: 16px; font-weight: 700; }
-QLabel#StatHint { color: #6C727B; font-size: 10px; }
-QLabel#MarketTitle { color: #F1F3F5; font-size: 17px; font-weight: 700; }
-QLabel#MarketCardTitle { color: #E7E9EC; font-size: 13px; font-weight: 600; }
-QLabel#MarketSub { color: #7B818A; font-size: 11px; }
-QLabel#MarketUpdated { color: #6C727B; font-size: 11px; }
-QLabel#MarketHint { color: #6C727B; font-size: 10px; }
-QLabel#MarketStatus { color: #878D96; font-size: 12px; padding: 8px 2px; }
-QLabel#MarketStatus[state="error"] { color: #FF9C9C; }
-QLabel#TableHead { color: #6C727B; font-size: 10px; font-weight: 600; }
-QLabel#TableCell { color: #A6ABB3; font-size: 11px; }
-QLabel#TableCellStrong { color: #E7E9EC; font-size: 11px; font-weight: 600; }
-QLabel#TableCell[state="up"] { color: #67E396; }
-QLabel#TableCell[state="down"] { color: #FF8D8D; }
+QLabel#StatLabel { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#StatValue { color: @TEXT@; font-size: @FS_TITLE@px; font-weight: 700; }
+QLabel#StatHint { color: @FAINT@; font-size: @FS_MICRO@px; }
+QLabel#MarketTitle { color: @TEXT@; font-size: @FS_TITLE@px; font-weight: 700; }
+QLabel#MarketCardTitle { color: @TEXT_SOFT@; font-size: @FS_BODY@px; font-weight: 600; }
+QLabel#MarketSub { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#MarketUpdated { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QLabel#MarketHint { color: @FAINT@; font-size: @FS_MICRO@px; }
+QLabel#MarketStatus { color: @MUTED@; font-size: @FS_LABEL@px; padding: 8px 2px; }
+QLabel#MarketStatus[state="error"] { color: @LOSS@; }
+QLabel#TableHead { color: @FAINT@; font-size: @FS_MICRO@px; font-weight: 600; }
+QLabel#TableCell { color: @MUTED@; font-size: @FS_CAPTION@px; }
+QLabel#TableCellStrong { color: @TEXT_SOFT@; font-size: @FS_CAPTION@px; font-weight: 600; }
+QLabel#TableCell[state="up"] { color: @PROFIT@; }
+QLabel#TableCell[state="down"] { color: @LOSS@; }
 
-/* ------------------------------------------------------------ market trade */
+/* -------------------------------------------------------------- market trade */
 QFrame#TradeCard {
-    background-color: rgba(255, 255, 255, 5);
-    border: 1px solid rgba(255, 255, 255, 18);
-    border-radius: 12px;
+    background-color: @CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_CARD_LARGE@px;
 }
 QPushButton#TradeSide {
     background-color: transparent;
-    border: 1px solid rgba(255, 255, 255, 26);
-    border-radius: 8px;
+    border: 1px solid @BORDER@;
+    border-radius: @R_TAB@px;
     padding: 6px 18px;
-    color: #B9BEC6;
-    font-size: 12px;
+    color: @MUTED@;
+    font-size: @FS_LABEL@px;
     font-weight: 600;
 }
 QPushButton#TradeSide:hover {
-    background-color: rgba(255, 255, 255, 7);
-    color: #E9EBEE;
+    background-color: @SURFACE_SOFT@;
+    border-color: @BORDER_STRONG@;
+    color: @TEXT@;
 }
 QPushButton#TradeSide:checked {
-    background-color: @ACCENT_SOFT@;
-    border-color: @ACCENT@;
-    color: #FFFFFF;
+    background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 @ACCENT_SOFT_STRONG@, stop: 1 @ACCENT_SOFT@);
+    border-color: @ACCENT_BORDER_SOFT@;
+    color: @ACCENT_TEXT@;
 }
 QPushButton#TradeQuick {
     background-color: transparent;
-    border: 1px solid rgba(255, 255, 255, 20);
-    border-radius: 7px;
+    border: 1px solid @BORDER@;
+    border-radius: @R_CHIP@px;
     padding: 3px 8px;
-    color: #9BA1AA;
-    font-size: 10px;
+    color: @MUTED@;
+    font-size: @FS_MICRO@px;
 }
 QPushButton#TradeQuick:hover {
-    background-color: rgba(255, 255, 255, 8);
-    color: #E9EBEE;
+    background-color: @SURFACE@;
+    color: @TEXT@;
 }
 QPushButton#TradeQuick:disabled {
-    color: #4E545C;
-    border-color: rgba(255, 255, 255, 10);
+    color: @FAINT@;
+    border-color: @BORDER_SOFT@;
 }
-QLabel#TradeSum { color: #F1F3F5; font-size: 16px; font-weight: 700; }
-QLabel#TradeDelta { color: #9BA1AA; font-size: 13px; font-weight: 700; }
-QLabel#TradeDelta[state="good"] { color: #67E396; }
-QLabel#TradeDelta[state="bad"] { color: #FF8D8D; }
-QLabel#TradeVerdict { color: #7B818A; font-size: 10px; }
-QLabel#TradeOwn { color: #6C727B; font-size: 10px; }
-QLabel#TradeSaved { color: #67E396; font-size: 11px; }
-QLabel#TradeSaved[state="error"] { color: #FF9C9C; }
+QLabel#TradeSum { color: @TEXT@; font-size: @FS_TITLE@px; font-weight: 700; }
+QLabel#TradeDelta { color: @MUTED@; font-size: @FS_SUBTITLE@px; font-weight: 700; }
+QLabel#TradeDelta[state="good"] { color: @PROFIT@; }
+QLabel#TradeDelta[state="bad"] { color: @LOSS@; }
+QLabel#TradeVerdict { color: @MUTED@; font-size: @FS_MICRO@px; }
+QLabel#TradeOwn { color: @FAINT@; font-size: @FS_MICRO@px; }
+QLabel#TradeSaved { color: @PROFIT@; font-size: @FS_CAPTION@px; }
+QLabel#TradeSaved[state="error"] { color: @LOSS@; }
 
-/* ----------------------------------------------------------------- scroll */
+/* -------------------------------------------------------------------- scroll */
 QScrollArea {
     border: none;
     background-color: transparent;
@@ -555,181 +649,137 @@ QScrollArea {
 QScrollArea > QWidget > QWidget {
     background-color: transparent;
 }
-QWidget#HistoryContent {
-    background-color: transparent;
-}
+QWidget#HistoryContent { background-color: transparent; }
 QScrollBar:vertical {
     background: transparent;
-    width: 8px;
+    width: 10px;
     margin: 2px 0px;
 }
 QScrollBar::handle:vertical {
-    background: #2E333A;
+    background: @SCROLL@;
     border-radius: 3px;
     min-height: 28px;
 }
-QScrollBar::handle:vertical:hover {
-    background: @ACCENT@;
-}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0px;
-}
+QScrollBar::handle:vertical:hover { background: @ACCENT_LIGHT@; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background: transparent;
 }
-QScrollBar:horizontal {
-    height: 0px;
-}
+QScrollBar:horizontal { height: 0px; }
 
 /* ----------------------------------------------------------- calendar popup */
 QFrame#PopupCard {
-    background-color: #111317;
-    border: 1px solid #2D3239;
-    border-radius: 12px;
+    background: qlineargradient(x1: 0, y1: 0, x2: 0.6, y2: 1, stop: 0 @PANEL_GLOW@, stop: 0.5 @PANEL@, stop: 1 @PANEL@);
+    border: 1px solid @BORDER@;
+    border-radius: @R_POPUP@px;
 }
 QCalendarWidget QWidget {
-    background-color: #111317;
-    color: #E7E9EC;
+    background-color: @PANEL@;
+    color: @TEXT@;
 }
 QCalendarWidget QWidget#qt_calendar_navigationbar {
-    background-color: #111317;
-    border-bottom: 1px solid #22262B;
+    background-color: @PANEL@;
+    border-bottom: 1px solid @BORDER_SOFT@;
 }
 QCalendarWidget QToolButton {
     background-color: transparent;
     border: none;
-    border-radius: 6px;
-    color: #E7E9EC;
-    font-size: 12px;
+    border-radius: @R_CHIP@px;
+    color: @TEXT@;
+    font-size: @FS_LABEL@px;
     font-weight: 600;
     padding: 4px 8px;
 }
-QCalendarWidget QToolButton:hover {
-    background-color: rgba(255, 255, 255, 14);
-}
-QCalendarWidget QToolButton::menu-indicator {
-    image: none;
-}
+QCalendarWidget QToolButton:hover { background-color: @SURFACE@; }
+QCalendarWidget QToolButton::menu-indicator { image: none; }
 QCalendarWidget QMenu {
-    background-color: #171A1E;
-    border: 1px solid #2D3239;
-    color: #E7E9EC;
+    background-color: @PANEL@;
+    border: 1px solid @BORDER@;
+    color: @TEXT@;
 }
-QCalendarWidget QMenu::item:selected {
-    background-color: #242B36;
-}
+QCalendarWidget QMenu::item:selected { background-color: @SURFACE@; }
 QCalendarWidget QSpinBox {
-    background-color: #171A1E;
-    color: #E7E9EC;
-    border: 1px solid #2D3239;
+    background-color: @INPUT_BG@;
+    color: @TEXT@;
+    border: 1px solid @BORDER@;
     selection-background-color: @ACCENT@;
 }
 QCalendarWidget QAbstractItemView:enabled {
-    background-color: #111317;
-    alternate-background-color: #15181D;
-    color: #D7DADF;
+    background-color: @PANEL@;
+    alternate-background-color: @CAL_ALT@;
+    color: @TEXT_SOFT@;
     selection-background-color: @ACCENT@;
     selection-color: @ON_ACCENT@;
     outline: 0;
     border: none;
-    font-size: 12px;
+    font-size: @FS_LABEL@px;
 }
-QCalendarWidget QAbstractItemView:disabled {
-    color: #565C64;
-}
+QCalendarWidget QAbstractItemView:disabled { color: @FAINT@; }
 QCalendarWidget QTableView {
-    background-color: #111317;
-    alternate-background-color: #15181D;
+    background-color: @PANEL@;
+    alternate-background-color: @CAL_ALT@;
     selection-background-color: @ACCENT@;
     selection-color: @ON_ACCENT@;
     border: none;
 }
 QCalendarWidget QHeaderView {
-    background-color: #111317;
-    color: #717780;
+    background-color: @PANEL@;
+    color: @MUTED@;
     border: none;
 }
 QCalendarWidget QHeaderView::section {
-    background-color: #111317;
-    color: #717780;
+    background-color: @PANEL@;
+    color: @MUTED@;
     border: none;
     padding: 3px 0px;
-    font-size: 11px;
+    font-size: @FS_CAPTION@px;
 }
 QLineEdit#TimeSpin {
     min-height: 20px;
     padding: 0px 4px;
-    font-size: 13px;
-    background-color: #171A1F;
+    font-size: @FS_BODY@px;
+    background-color: @INPUT_BG@;
 }
 
-/* --------------------------------------------------------------------- misc */
+/* ---------------------------------------------------------------------- misc */
 QToolTip {
-    background-color: #16191D;
-    color: #E9EBEE;
-    border: 1px solid #2E333A;
-    border-radius: 6px;
-    padding: 5px 8px;
+    background-color: @PANEL@;
+    color: @TEXT@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_CHIP@px;
+    padding: 6px 9px;
 }
 QLabel#Toast {
-    background-color: rgba(25, 28, 33, 246);
-    border: 1px solid rgba(255, 255, 255, 24);
-    border-radius: 9px;
-    padding: 8px 16px;
-    color: #F2F4F6;
-    font-size: 12px;
+    background-color: @TOAST_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_HEADER@px;
+    padding: 9px 16px;
+    color: @TEXT@;
+    font-size: @FS_LABEL@px;
 }
 QMessageBox {
-    background-color: #101215;
+    background-color: @PANEL@;
 }
 QMessageBox QLabel {
-    color: #E7E9EC;
-    font-size: 13px;
+    color: @TEXT@;
+    font-size: @FS_BODY@px;
     min-width: 300px;
 }
-QMessageBox QPushButton {
-    min-width: 84px;
-}
-QWidget#ImageOverlay {
-    background-color: rgba(3, 4, 6, 225);
-}
-QLabel#OverlayHint {
-    color: #8D939B;
-    font-size: 12px;
-}
-QLabel#OverlayTitle {
-    color: #F0F2F4;
-    font-size: 14px;
-    font-weight: 600;
-}
-QSizeGrip {
-    background-color: transparent;
-}
+QMessageBox QPushButton { min-width: 84px; }
+QWidget#ImageOverlay { background-color: @OVERLAY@; }
+QLabel#OverlayHint { color: @MUTED@; font-size: @FS_LABEL@px; }
+QLabel#OverlayTitle { color: @TEXT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
+QSizeGrip { background-color: transparent; }
 """
 
-
-DEFAULT_THEME = "dark"
-DEFAULT_ACCENT = "#7C9CFF"
-
-ACCENTS: dict[str, tuple[str, str]] = {
-    "blue": ("#7C9CFF", "Голубой"),
-    "violet": ("#B79CFF", "Лавандовый"),
-    "emerald": ("#6FE7B0", "Мятный"),
-    "amber": ("#F5C86B", "Песочный"),
-    "rose": ("#FF9AAA", "Розовый"),
-    "slate": ("#C3CEDD", "Серебристый"),
-}
-
-THEMES: dict[str, str] = {
-    "dark": "Чёрная",
-    "light": "Белая",
-}
-
-_ACTIVE_THEME = DEFAULT_THEME
+# Backwards-compatible aliases: old code exposed the raw QSS blocks.
+BASE_QSS = QSS_TEMPLATE
+LIGHT_QSS = ""
 
 
+# ------------------------------------------------------------------ utilities
 def set_active_theme(theme_name: str) -> str:
-    """Remember the theme so widgets can pick readable icon/photo colors."""
+    """Remember the theme so widgets can pick readable icon colours."""
     global _ACTIVE_THEME
     _ACTIVE_THEME = theme_name if theme_name in THEMES else DEFAULT_THEME
     return _ACTIVE_THEME
@@ -740,472 +790,280 @@ def active_theme() -> str:
 
 
 def icon_tone(role: str = "muted") -> str:
-    """Icon color that stays readable in either theme."""
+    """Icon colour that stays readable in either theme."""
+    dark = design.DARK
+    light = design.LIGHT
     tones = {
-        "muted": ("#8C929A", "#6B7280"),
-        "text": ("#D9DDE2", "#33383F"),
-        "strong": ("#B8BDC5", "#4B5563"),
-        "faint": ("#6C727B", "#8A919B"),
+        "muted": (dark.muted, light.muted),
+        "text": (dark.text, light.text),
+        "strong": (dark.text_soft, light.text_soft),
+        "faint": (dark.faint, light.faint),
     }
-    dark, light = tones.get(role, tones["muted"])
-    return light if _ACTIVE_THEME == "light" else dark
+    dark_color, light_color = tones.get(role, tones["muted"])
+    return light_color if _ACTIVE_THEME == "light" else dark_color
 
 
-LIGHT_QSS = r"""
-/* ------------------------------------------------------------- light theme */
-QWidget {
-    color: #1B1F24;
-}
-QFrame#Panel {
-    background-color: rgba(255, 255, 255, 168);
-    border: 1px solid rgba(0, 0, 0, 26);
-}
-QLabel#FieldLabel { color: #6B7280; }
-QLabel#AppTitle { color: #14181D; }
-QLabel#HistoryPill {
-    background-color: rgba(0, 0, 0, 4);
-    border: 1px solid rgba(0, 0, 0, 20);
-    color: #22262B;
-}
-QLabel#CountMuted { color: #7A818B; }
-QPushButton#Tab {
-    background-color: transparent;
-    border: 1px solid transparent;
-    color: #7A818B;
-}
-QPushButton#Tab:hover {
-    background-color: rgba(0, 0, 0, 4);
-    color: #1B1F24;
-}
-QPushButton#Tab:checked {
-    background-color: rgba(0, 0, 0, 5);
-    border-color: rgba(0, 0, 0, 24);
-    color: #14181D;
-}
-QFrame#WeekHeader {
-    background-color: rgba(0, 0, 0, 3);
-    border: 1px solid rgba(0, 0, 0, 11);
-}
-QFrame#WeekHeader:hover { background-color: rgba(0, 0, 0, 5); }
-QLabel#WeekChevron { color: #6B7280; }
-QLabel#WeekTitle { color: #33383F; }
-QLabel#WeekMeta { color: #7A818B; }
-QLabel#WeekAmount { color: #4B5563; }
-QLabel#DragHandle:hover { background-color: rgba(0, 0, 0, 8); }
-QFrame#PairHeader {
-    background-color: rgba(0, 0, 0, 4);
-    border: 1px solid rgba(0, 0, 0, 14);
-}
-QFrame#PairHeader:hover { background-color: rgba(0, 0, 0, 7); }
-QLabel#PairChevron { color: #6B7280; }
-QLabel#PairTitle { color: #1B1F24; }
-QLabel#PairMeta { color: #7A818B; }
-QLabel#PairProfit { color: #4B5563; }
-QLabel#PairProfit[state="positive"] { color: #1E8E4E; }
-QLabel#PairProfit[state="negative"] { color: #C0392B; }
-QLabel#DealTitle { color: #1B1F24; }
-QLabel#DealDate { color: #7A818B; }
-QLabel#DealComment { color: #4B5563; }
-QLabel#EmptyTitle { color: #2A2F36; }
-QLabel#EmptyHint { color: #7A818B; }
-QLabel#PhotoTitle { color: #262B31; }
-QLabel#PhotoHint { color: #7A818B; }
-QLabel#PhotoIcon {
-    background-color: rgba(0, 0, 0, 4);
-    border: 1px solid rgba(0, 0, 0, 10);
-}
-QLabel#Muted { color: #6B7280; }
-QLabel#PopupTitle { color: #14181D; }
-QLabel#PopupSection { color: #6B7280; }
-QLabel#PopupHint { color: #7A818B; }
-
-QLineEdit, QTextEdit, QComboBox, QSpinBox {
-    background-color: rgba(255, 255, 255, 222);
-    border: 1px solid #D3D8DF;
-    color: #1B1F24;
-}
-QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {
-    background-color: rgba(255, 255, 255, 243);
-    border: 1px solid @ACCENT@;
-}
-QLineEdit[error="true"], QTextEdit[error="true"] {
-    border: 1px solid #D9534F;
-}
-QComboBox QAbstractItemView {
-    background-color: #FFFFFF;
-    border: 1px solid #D3D8DF;
-    color: #1B1F24;
-    selection-background-color: #EDF1F7;
-    selection-color: #111418;
-}
-QPushButton {
-    background-color: #F2F4F7;
-    border: 1px solid #D3D8DF;
-    color: #22262B;
-}
-QPushButton:hover { background-color: #E8ECF2; }
-QPushButton:pressed { background-color: #DDE3EA; }
-QPushButton#Submit {
-    background-color: @ACCENT@;
-    border: 1px solid @ACCENT@;
-    color: @ON_ACCENT@;
-}
-QPushButton#Submit:hover {
-    background-color: @ACCENT_STRONG@;
-    border-color: @ACCENT_STRONG@;
-}
-QPushButton#Submit:pressed { background-color: @ACCENT_DARK@; }
-QPushButton#Ghost {
-    background-color: transparent;
-    border: 1px solid rgba(0, 0, 0, 28);
-    color: #4B5563;
-}
-QPushButton#Ghost:hover {
-    background-color: rgba(0, 0, 0, 5);
-    color: #14181D;
-}
-QPushButton#Chip {
-    background-color: rgba(255, 255, 255, 150);
-    border: 1px solid rgba(0, 0, 0, 22);
-    color: #33383F;
-}
-QPushButton#Chip:hover {
-    background-color: rgba(255, 255, 255, 220);
-    border-color: rgba(0, 0, 0, 40);
-}
-QPushButton#PopupGhost {
-    background-color: transparent;
-    border: 1px solid rgba(0, 0, 0, 24);
-    color: #4B5563;
-}
-QPushButton#PopupGhost:hover { background-color: rgba(0, 0, 0, 5); }
-QPushButton#PopupGhost:checked {
-    background-color: @ACCENT_SOFT@;
-    border-color: @ACCENT@;
-    color: #14181D;
-}
-QPushButton#PopupGhost:disabled {
-    background-color: transparent;
-    border-color: rgba(0, 0, 0, 14);
-    color: #AEB5BF;
-}
-QPushButton#PopupPrimary {
-    background-color: #1B1F24;
-    border: 1px solid #1B1F24;
-    color: #FFFFFF;
-}
-QPushButton#PopupPrimary:hover { background-color: #2A3038; }
-QPushButton#Danger {
-    color: #B33A3A;
-    border-color: rgba(179, 58, 58, 90);
-}
-QPushButton#Danger:hover { background-color: rgba(179, 58, 58, 25); }
-
-QToolButton:hover { background-color: rgba(0, 0, 0, 8); }
-QToolButton:pressed { background-color: rgba(0, 0, 0, 4); }
-QToolButton#WinBtn:hover { background-color: rgba(0, 0, 0, 10); }
-QToolButton#WinClose:hover { background-color: #D94147; }
-
-QFrame#PhotoDrop {
-    background-color: rgba(0, 0, 0, 2);
-    border: 1px solid #D3D8DF;
-}
-QFrame#PhotoDrop:hover {
-    background-color: rgba(0, 0, 0, 4);
-    border-color: #B8C0CA;
-}
-QFrame#PhotoDrop[filled="true"] {
-    background-color: rgba(0, 0, 0, 3);
-    border: 1px solid #D3D8DF;
-}
-
-QFrame#DealCard[side="buy"] {
-    background-color: rgba(255, 226, 228, 165);
-    border: 1px solid rgba(199, 62, 69, 55);
-}
-QFrame#DealCard[side="buy"]:hover {
-    background-color: rgba(255, 216, 219, 195);
-}
-QFrame#DealCard[side="sell"] {
-    background-color: rgba(224, 246, 232, 165);
-    border: 1px solid rgba(38, 148, 88, 50);
-}
-QFrame#DealCard[side="sell"]:hover {
-    background-color: rgba(211, 241, 223, 195);
-}
-QLabel#BadgeBuy {
-    background-color: rgba(199, 62, 69, 28);
-    color: #B33A3A;
-}
-QLabel#BadgeSell {
-    background-color: rgba(38, 148, 88, 25);
-    color: #1E8E4E;
-}
-QLabel#AmountBuy { color: #C0392B; }
-QLabel#AmountSell { color: #1E8E4E; }
-
-QFrame#TotalBar {
-    background-color: rgba(0, 0, 0, 4);
-    border: 1px solid rgba(0, 0, 0, 14);
-}
-QFrame#TotalBar[state="negative"] {
-    background-color: rgba(255, 226, 228, 160);
-    border: 1px solid rgba(199, 62, 69, 55);
-}
-QFrame#TotalBar[state="positive"] {
-    background-color: rgba(224, 246, 232, 160);
-    border: 1px solid rgba(38, 148, 88, 50);
-}
-QLabel#TotalCaption { color: #4B5563; }
-QLabel#TotalValue { color: #1B1F24; }
-QLabel#TotalValue[state="negative"] { color: #C0392B; }
-QLabel#TotalValue[state="positive"] { color: #1E8E4E; }
-
-QScrollBar::handle:vertical { background: #C6CDD6; }
-QScrollBar::handle:vertical:hover { background: @ACCENT@; }
-
-QFrame#MarketRow {
-    background-color: rgba(255, 255, 255, 150);
-    border: 1px solid rgba(0, 0, 0, 8);
-}
-QFrame#MarketRow:hover {
-    background-color: #FFFFFF;
-    border-color: rgba(0, 0, 0, 22);
-}
-QLabel#MarketThumb {
-    background-color: rgba(0, 0, 0, 4);
-    border: 1px solid rgba(0, 0, 0, 10);
-    color: #4B5563;
-}
-QLabel#MarketName { color: #1B1F24; }
-QLabel#MarketMeta { color: #7A818B; }
-QLabel#MarketPrice { color: #1B1F24; }
-QLabel#MarketSold { color: #7A818B; }
-QFrame#MarketCard {
-    background-color: rgba(255, 255, 255, 150);
-    border: 1px solid rgba(0, 0, 0, 12);
-}
-QFrame#MarketStat {
-    background-color: rgba(255, 255, 255, 168);
-    border: 1px solid rgba(0, 0, 0, 12);
-}
-QFrame#MarketStat[highlight="true"] {
-    background-color: @ACCENT_SOFT@;
-    border-color: @ACCENT@;
-}
-QLabel#StatLabel { color: #7A818B; }
-QLabel#StatValue { color: #14181D; }
-QLabel#StatHint { color: #8A919B; }
-QLabel#MarketTitle { color: #14181D; }
-QLabel#MarketCardTitle { color: #1B1F24; }
-QLabel#MarketSub { color: #7A818B; }
-QLabel#MarketUpdated { color: #7A818B; }
-QLabel#MarketHint { color: #8A919B; }
-QLabel#MarketStatus { color: #6B7280; }
-QLabel#MarketStatus[state="error"] { color: #B33A3A; }
-QLabel#TableHead { color: #7A818B; }
-QLabel#TableCell { color: #4B5563; }
-QLabel#TableCellStrong { color: #1B1F24; }
-QLabel#TableCell[state="up"] { color: #1E8E4E; }
-QLabel#TableCell[state="down"] { color: #C0392B; }
-
-/* ------------------------------------------------------------ market trade */
-QFrame#TradeCard {
-    background-color: rgba(0, 0, 0, 3);
-    border: 1px solid rgba(0, 0, 0, 16);
-    border-radius: 12px;
-}
-QPushButton#TradeSide {
-    background-color: transparent;
-    border: 1px solid rgba(0, 0, 0, 26);
-    color: #4B5563;
-}
-QPushButton#TradeSide:hover {
-    background-color: rgba(0, 0, 0, 5);
-    color: #14181D;
-}
-QPushButton#TradeSide:checked {
-    background-color: @ACCENT_SOFT@;
-    border-color: @ACCENT@;
-    color: #14181D;
-}
-QPushButton#TradeQuick {
-    background-color: transparent;
-    border: 1px solid rgba(0, 0, 0, 20);
-    color: #6B7280;
-}
-QPushButton#TradeQuick:hover {
-    background-color: rgba(0, 0, 0, 5);
-    color: #14181D;
-}
-QPushButton#TradeQuick:disabled {
-    color: #B4BAC3;
-    border-color: rgba(0, 0, 0, 10);
-}
-QLabel#TradeSum { color: #14181D; }
-QLabel#TradeDelta { color: #6B7280; }
-QLabel#TradeDelta[state="good"] { color: #1E8E4E; }
-QLabel#TradeDelta[state="bad"] { color: #C0392B; }
-QLabel#TradeVerdict { color: #7A818B; }
-QLabel#TradeOwn { color: #7A818B; }
-QLabel#TradeSaved { color: #1E8E4E; }
-QLabel#TradeSaved[state="error"] { color: #B33A3A; }
-
-QFrame#PopupCard {
-    background-color: #FFFFFF;
-    border: 1px solid #D3D8DF;
-}
-QCalendarWidget QWidget { background-color: #FFFFFF; color: #1B1F24; }
-QCalendarWidget QWidget#qt_calendar_navigationbar {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #E4E8EE;
-}
-QCalendarWidget QToolButton { color: #1B1F24; }
-QCalendarWidget QToolButton:hover { background-color: rgba(0, 0, 0, 7); }
-QCalendarWidget QMenu {
-    background-color: #FFFFFF;
-    border: 1px solid #D3D8DF;
-    color: #1B1F24;
-}
-QCalendarWidget QMenu::item:selected { background-color: #EDF1F7; }
-QCalendarWidget QSpinBox {
-    background-color: #F3F5F8;
-    color: #1B1F24;
-    border: 1px solid #D3D8DF;
-}
-QCalendarWidget QAbstractItemView:enabled {
-    background-color: #FFFFFF;
-    alternate-background-color: #F6F8FA;
-    color: #33383F;
-    selection-background-color: @ACCENT@;
-    selection-color: @ON_ACCENT@;
-}
-QCalendarWidget QAbstractItemView:disabled { color: #A9B0BA; }
-QCalendarWidget QTableView {
-    background-color: #FFFFFF;
-    alternate-background-color: #F6F8FA;
-    selection-background-color: @ACCENT@;
-    selection-color: @ON_ACCENT@;
-}
-QCalendarWidget QHeaderView { background-color: #FFFFFF; color: #7A818B; }
-QCalendarWidget QHeaderView::section {
-    background-color: #FFFFFF;
-    color: #7A818B;
-}
-QLineEdit#TimeSpin { background-color: #F3F5F8; }
-
-QToolTip {
-    background-color: #FFFFFF;
-    color: #1B1F24;
-    border: 1px solid #D3D8DF;
-}
-QLabel#Toast {
-    background-color: rgba(255, 255, 255, 245);
-    border: 1px solid rgba(0, 0, 0, 22);
-    color: #14181D;
-}
-QMessageBox { background-color: #FFFFFF; }
-QMessageBox QLabel { color: #1B1F24; }
-"""
+# -------------------------------------------------------------- colour helpers
+def accent_profile(
+    accent: str, theme_name: str = DEFAULT_THEME
+) -> design.AccentProfile:
+    """Full derived accent palette (base, tones, glow, gradient, contrast)."""
+    return design.accent_profile(accent, theme_name)
 
 
 def theme_accent(accent: str, theme_name: str = DEFAULT_THEME) -> QColor:
     """Accent used for painting: always readable on the theme background."""
-    color = QColor(accent)
-    if not color.isValid():
-        color = QColor(DEFAULT_ACCENT)
-    if theme_name == "light":
-        return _ensure_contrast(color, QColor("#F4F6F9"), toward_white=False)
-    return _ensure_contrast(color, QColor("#0B0E12"), toward_white=True)
+    return QColor(accent_profile(accent, theme_name).base)
 
 
-def _channel_luminance(value: int) -> float:
-    channel = value / 255
-    if channel <= 0.03928:
-        return channel / 12.92
-    return ((channel + 0.055) / 1.055) ** 2.4
+def shadow_color(
+    theme_name: str = DEFAULT_THEME,
+    accent: str = DEFAULT_ACCENT,
+    *,
+    strong: bool = True,
+) -> QColor:
+    """Theme-specific elevation shadow, very lightly tinted by the accent."""
+    tokens = design.tokens(theme_name)
+    base = QColor(tokens.shadow if strong else tokens.shadow_soft)
+    if not base.isValid():
+        base = QColor(0, 0, 0, 150)
+    tint = 0.16 if theme_name != "light" else 0.09
+    result = design.blend(base, theme_accent(accent, theme_name), tint)
+    result.setAlpha(base.alpha())
+    return result
 
 
-def relative_luminance(color: QColor) -> float:
-    return (
-        0.2126 * _channel_luminance(color.red())
-        + 0.7152 * _channel_luminance(color.green())
-        + 0.0722 * _channel_luminance(color.blue())
-    )
+def relative_luminance(color: str | QColor) -> float:
+    return design.relative_luminance(color)
 
 
-def contrast_ratio(first: QColor, second: QColor) -> float:
-    one = relative_luminance(first)
-    two = relative_luminance(second)
-    high, low = max(one, two), min(one, two)
-    return (high + 0.05) / (low + 0.05)
+def contrast_ratio(first: str | QColor, second: str | QColor) -> float:
+    return design.contrast_ratio(first, second)
 
 
-def contrast_text(background: QColor) -> QColor:
+def contrast_text(background: str | QColor) -> QColor:
     """White or near-black text, whichever reads better on the background."""
-    dark = QColor("#0B0E12")
-    light = QColor("#FFFFFF")
-    if contrast_ratio(background, dark) >= contrast_ratio(background, light):
-        return dark
-    return light
+    return design.contrast_text(background)
 
 
 def _blend(color: QColor, target: QColor, amount: float) -> QColor:
-    return QColor(
-        round(color.red() + (target.red() - color.red()) * amount),
-        round(color.green() + (target.green() - color.green()) * amount),
-        round(color.blue() + (target.blue() - color.blue()) * amount),
-    )
+    return design.blend(color, target, amount)
 
 
 def _ensure_contrast(
     color: QColor, background: QColor, toward_white: bool, minimum: float = 4.5
 ) -> QColor:
-    """Подмешать белый или чёрный, пока акцент не станет читаемым."""
-    target = QColor("#FFFFFF") if toward_white else QColor("#000000")
-    result = QColor(color)
-    for _step in range(24):
-        if contrast_ratio(result, background) >= minimum:
-            break
-        result = _blend(result, target, 0.12)
-    return result
+    return design.ensure_contrast(color, background, toward_white, minimum)
+
+
+# ---------------------------------------------------------------------- tokens
+def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
+    """Map semantic design tokens to the placeholders used by the QSS."""
+    theme = design.tokens(theme_name)
+    profile = accent_profile(accent, theme_name)
+    accent_color = QColor(profile.base)
+    light = theme_name == "light"
+    on_accent = QColor(profile.on)
+    radius = design.RADIUS
+
+    # Accent-driven surfaces -------------------------------------------------
+    accent_soft = profile.soft
+    accent_soft_strong = profile.soft_strong
+    accent_border_soft = profile.border
+    input_focus = design.mix(
+        theme.input_bg, accent_color, 0.035 if light else 0.045
+    )
+    panel_glow = design.mix(
+        theme.panel_top, accent_color, 0.035 if light else 0.07
+    )
+    accent_surface = design.mix(
+        theme.panel, accent_color, 0.24 if light else 0.28
+    )
+    accent_text = design.ensure_contrast(
+        accent_color, accent_surface, toward_white=not light, minimum=4.5
+    ).name()
+
+    submit_bg = profile.base
+    submit_hover = profile.hover
+    submit_pressed = profile.pressed
+    submit_border = profile.base
+    submit_text = profile.on
+
+    if light:
+        primary_bg = theme.text
+        primary_hover = design.mix(theme.text, "#000000", 0.16)
+        primary_text = "#FFFFFF"
+    else:
+        primary_bg = theme.text
+        primary_hover = "#FFFFFF"
+        primary_text = theme.bg
+
+    # Neutral surfaces -------------------------------------------------------
+    surface_soft = design.rgba(theme.surface, 0.55 if not light else 0.75)
+    surface_translucent = design.rgba(theme.surface, 0.75 if not light else 0.85)
+    header_bg = design.mix(theme.panel, theme.surface, 0.30 if not light else 0.55)
+    header_hover = design.mix(
+        theme.panel, theme.surface_hover, 0.42 if not light else 0.78
+    )
+    pair_bg = design.mix(theme.panel, theme.surface, 0.46 if not light else 0.70)
+    pair_hover = design.mix(
+        theme.panel, theme.surface_hover, 0.58 if not light else 0.88
+    )
+    pill_bg = design.mix(theme.panel, theme.surface, 0.50 if not light else 0.72)
+    chip_bg = design.rgba(theme.surface, 0.45 if not light else 0.65)
+    btn_bg = design.mix(theme.panel, theme.surface, 0.55 if not light else 0.80)
+    btn_hover = design.mix(theme.panel, theme.surface_hover, 0.72 if not light else 0.95)
+    btn_pressed = design.mix(theme.panel, theme.surface, 0.38 if not light else 0.70)
+    stat_bg = design.mix(theme.card, theme.surface, 0.35 if not light else 0.45)
+    toast_bg = design.mix(theme.panel, theme.surface, 0.62 if not light else 0.10)
+    cal_alt = theme.bg_bottom if light else design.mix(theme.panel, theme.surface, 0.30)
+    scroll = design.mix(theme.panel, theme.border_strong, 0.72)
+
+    # Financial semantics ----------------------------------------------------
+    profit, loss = theme.profit, theme.loss
+    buy_bg = design.mix(theme.card, loss, 0.10 if not light else 0.06)
+    buy_hover = design.mix(theme.card, loss, 0.15 if not light else 0.10)
+    buy_border = design.rgba(loss, 0.30 if not light else 0.32)
+    sell_bg = design.mix(theme.card, profit, 0.09 if not light else 0.06)
+    sell_hover = design.mix(theme.card, profit, 0.14 if not light else 0.10)
+    sell_border = design.rgba(profit, 0.26 if not light else 0.28)
+    loss_tint = design.rgba(loss, 0.12 if not light else 0.10)
+    profit_tint = design.rgba(profit, 0.12 if not light else 0.10)
+    loss_border = design.rgba(loss, 0.45 if not light else 0.40)
+    profit_border = design.rgba(profit, 0.42 if not light else 0.38)
+    loss_badge = design.rgba(loss, 0.16 if not light else 0.12)
+    profit_badge = design.rgba(profit, 0.15 if not light else 0.12)
+    total_bg = design.mix(theme.panel, theme.surface, 0.34 if not light else 0.52)
+    total_neg = design.mix(theme.panel, loss, 0.12 if not light else 0.07)
+    total_pos = design.mix(theme.panel, profit, 0.10 if not light else 0.07)
+    embed_bg = design.mix(theme.card, theme.bg, 0.30 if not light else 0.18)
+    embed_hover = design.mix(theme.card, theme.surface_hover, 0.45 if not light else 0.55)
+
+    return {
+        "FONT": design.font_family(),
+        # type scale
+        "FS_MICRO": str(design.TYPE_SCALE["micro"][0]),
+        "FS_CAPTION": str(design.TYPE_SCALE["caption"][0]),
+        "FS_LABEL": str(design.TYPE_SCALE["label"][0]),
+        "FS_BODY": str(design.TYPE_SCALE["body"][0]),
+        "FS_SUBTITLE": str(design.TYPE_SCALE["subtitle"][0]),
+        "FS_TITLE": str(design.TYPE_SCALE["title"][0]),
+        "FS_DISPLAY": str(design.TYPE_SCALE["display"][0]),
+        # radii
+        "R_PANEL": str(radius["panel"]),
+        "R_POPUP": str(radius["popup"]),
+        "R_CARD": str(radius["card"]),
+        "R_CARD_LARGE": str(radius["card_large"]),
+        "R_ROW": str(radius["row"]),
+        "R_HEADER": str(radius["header"]),
+        "R_FIELD": str(radius["field"]),
+        "R_BUTTON": str(radius["button"]),
+        "R_TAB": str(radius["tab"]),
+        "R_CHIP": str(radius["chip"]),
+        "R_ICON": str(radius["icon"]),
+        "R_BADGE": str(radius["badge"]),
+        # colours
+        "BG": theme.bg,
+        "PANEL": theme.panel,
+        "PANEL_TOP": theme.panel_top,
+        "CARD": theme.card,
+        "CARD_HOVER": theme.card_hover,
+        "SURFACE": theme.surface,
+        "SURFACE_HOVER": theme.surface_hover,
+        "SURFACE_SOFT": surface_soft,
+        "SURFACE_TRANSLUCENT": surface_translucent,
+        "INPUT_BG": theme.input_bg,
+        "INPUT_FOCUS": input_focus,
+        "BORDER": theme.border,
+        "BORDER_SOFT": theme.border_soft,
+        "BORDER_STRONG": theme.border_strong,
+        "TEXT": theme.text,
+        "TEXT_SOFT": theme.text_soft,
+        "MUTED": theme.muted,
+        "FAINT": theme.faint,
+        "PROFIT": profit,
+        "LOSS": loss,
+        "DANGER": design.DANGER,
+        "OVERLAY": theme.overlay,
+        # accent
+        "ACCENT": profile.base,
+        "ACCENT_LIGHT": profile.light,
+        "ACCENT_DARK": profile.dark,
+        "ACCENT_SOFT": accent_soft,
+        "ACCENT_SOFT_STRONG": accent_soft_strong,
+        "ACCENT_BORDER_SOFT": accent_border_soft,
+        "ACCENT_GLOW": profile.glow,
+        "ACCENT_GRADIENT_FROM": profile.gradient_from,
+        "ACCENT_GRADIENT_TO": profile.gradient_to,
+        "ACCENT_STRONG": profile.dark,
+        "ACCENT_TEXT": accent_text,
+        "PANEL_GLOW": panel_glow,
+        "ON_ACCENT": on_accent.name(),
+        "CHEVRON": "@CHEVRON@",
+        # component surfaces
+        "HEADER_BG": header_bg,
+        "HEADER_HOVER": header_hover,
+        "PAIR_BG": pair_bg,
+        "PAIR_HOVER": pair_hover,
+        "PILL_BG": pill_bg,
+        "CHIP_BG": chip_bg,
+        "TAB_ACTIVE_BG": accent_soft,
+        "TAB_ACTIVE_BORDER": accent_border_soft,
+        "BTN_BG": btn_bg,
+        "BTN_HOVER": btn_hover,
+        "BTN_PRESSED": btn_pressed,
+        "SUBMIT_BG": submit_bg,
+        "SUBMIT_HOVER": submit_hover,
+        "SUBMIT_PRESSED": submit_pressed,
+        "SUBMIT_BORDER": submit_border,
+        "SUBMIT_TEXT": submit_text,
+        "PRIMARY_BG": primary_bg,
+        "PRIMARY_HOVER": primary_hover,
+        "PRIMARY_TEXT": primary_text,
+        "STAT_BG": stat_bg,
+        "TOAST_BG": toast_bg,
+        "CAL_ALT": cal_alt,
+        "SCROLL": scroll,
+        "BUY_BG": buy_bg,
+        "BUY_HOVER": buy_hover,
+        "BUY_BORDER": buy_border,
+        "SELL_BG": sell_bg,
+        "SELL_HOVER": sell_hover,
+        "SELL_BORDER": sell_border,
+        "LOSS_TINT": loss_tint,
+        "PROFIT_TINT": profit_tint,
+        "LOSS_BORDER": loss_border,
+        "PROFIT_BORDER": profit_border,
+        "LOSS_BADGE": loss_badge,
+        "PROFIT_BADGE": profit_badge,
+        "TOTAL_BG": total_bg,
+        "TOTAL_NEG_BG": total_neg,
+        "TOTAL_POS_BG": total_pos,
+        "EMBED_BG": embed_bg,
+        "EMBED_HOVER": embed_hover,
+    }
 
 
 def palette(theme_name: str = DEFAULT_THEME, accent: str = DEFAULT_ACCENT) -> QPalette:
     highlight = theme_accent(accent, theme_name)
+    theme = design.tokens(theme_name)
     result = QPalette()
-    if theme_name == "light":
-        roles = {
-            QPalette.ColorRole.Window: "#F4F6F9",
-            QPalette.ColorRole.WindowText: "#1B1F24",
-            QPalette.ColorRole.Base: "#FFFFFF",
-            QPalette.ColorRole.AlternateBase: "#F6F8FA",
-            QPalette.ColorRole.Text: "#1B1F24",
-            QPalette.ColorRole.Button: "#F2F4F7",
-            QPalette.ColorRole.ButtonText: "#1B1F24",
-            QPalette.ColorRole.PlaceholderText: "#98A0AA",
-            QPalette.ColorRole.ToolTipBase: "#FFFFFF",
-            QPalette.ColorRole.ToolTipText: "#1B1F24",
-        }
-    else:
-        roles = {
-            QPalette.ColorRole.Window: "#050608",
-            QPalette.ColorRole.WindowText: "#E7E9EC",
-            QPalette.ColorRole.Base: "#0E1013",
-            QPalette.ColorRole.AlternateBase: "#14171B",
-            QPalette.ColorRole.Text: "#E7E9EC",
-            QPalette.ColorRole.Button: "#1A1D22",
-            QPalette.ColorRole.ButtonText: "#E7E9EC",
-            QPalette.ColorRole.PlaceholderText: "#5C626B",
-            QPalette.ColorRole.ToolTipBase: "#16191D",
-            QPalette.ColorRole.ToolTipText: "#E9EBEE",
-        }
+    roles = {
+        QPalette.ColorRole.Window: theme.bg,
+        QPalette.ColorRole.WindowText: theme.text,
+        QPalette.ColorRole.Base: theme.input_bg,
+        QPalette.ColorRole.AlternateBase: theme.surface,
+        QPalette.ColorRole.Text: theme.text,
+        QPalette.ColorRole.Button: theme.surface,
+        QPalette.ColorRole.ButtonText: theme.text,
+        QPalette.ColorRole.PlaceholderText: theme.faint,
+        QPalette.ColorRole.ToolTipBase: theme.panel,
+        QPalette.ColorRole.ToolTipText: theme.text,
+    }
     for role, color in roles.items():
         result.setColor(role, QColor(color))
     result.setColor(QPalette.ColorRole.Highlight, highlight)
-    result.setColor(
-        QPalette.ColorRole.HighlightedText, contrast_text(highlight)
-    )
+    result.setColor(QPalette.ColorRole.HighlightedText, contrast_text(highlight))
     result.setColor(QPalette.ColorRole.Link, highlight)
     return result
 
@@ -1215,18 +1073,10 @@ def stylesheet(
     accent: str = DEFAULT_ACCENT,
     theme_name: str = DEFAULT_THEME,
 ) -> str:
-    accent_color = theme_accent(accent, theme_name)
-    red, green, blue, _alpha = accent_color.getRgb()
-    qss = BASE_QSS if theme_name == "dark" else BASE_QSS + LIGHT_QSS
-    replacements = (
-        ("@CHEVRON@", chevron_path.replace("\\", "/")),
-        ("@ACCENT_SOFT_STRONG@", f"rgba({red}, {green}, {blue}, 60)"),
-        ("@ACCENT_SOFT@", f"rgba({red}, {green}, {blue}, 32)"),
-        ("@ACCENT_STRONG@", accent_color.darker(112).name()),
-        ("@ACCENT_DARK@", accent_color.darker(125).name()),
-        ("@ON_ACCENT@", contrast_text(accent_color).name()),
-        ("@ACCENT@", accent_color.name()),
-    )
-    for token, value in replacements:
-        qss = qss.replace(token, value)
-    return qss
+    tokens = _qss_tokens(theme_name, accent)
+    tokens["CHEVRON"] = chevron_path.replace("\\", "/")
+
+    def replace(match: re.Match[str]) -> str:
+        return tokens.get(match.group(1), match.group(0))
+
+    return re.sub(r"@([A-Z0-9_]+)@", replace, QSS_TEMPLATE)

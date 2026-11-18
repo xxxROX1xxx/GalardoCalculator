@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -14,6 +15,7 @@ from PySide6.QtCore import (
     QEvent,
     QIODevice,
     QMimeData,
+    QObject,
     QPoint,
     QPropertyAnimation,
     QRectF,
@@ -21,6 +23,7 @@ from PySide6.QtCore import (
     QTime,
     QTimer,
     Qt,
+    QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import (
@@ -36,6 +39,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QCalendarWidget,
     QColorDialog,
@@ -49,13 +53,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from . import icons, theme
-from .db import Deal
+from . import design, icons, theme, ui_kit
+from .db import CATEGORIES, Deal
 
 # --------------------------------------------------------------------------- helpers
 DEAL_DRAG_MIME = "application/x-galardo-deal"
@@ -191,19 +196,21 @@ def image_to_jpeg(image: QImage, max_side: int = 1600, quality: int = 87) -> byt
 
 
 def rounded_image_pixmap(
-    image: QImage, width: int, height: int, radius: float, dpr: float = 2.0
+    image: QImage,
+    width: int,
+    height: int,
+    radius: float,
+    dpr: float = 2.0,
+    fit: bool = True,
 ) -> QPixmap:
+    """Rounded thumbnail that keeps the whole photo visible by default.
+
+    ``fit=True`` scales the image down to the box (letterboxed bands stay
+    transparent, so the label background shows through). ``fit=False`` keeps
+    the old cover behaviour for callers that explicitly want a crop.
+    """
     target_w = max(1, int(round(width * dpr)))
     target_h = max(1, int(round(height * dpr)))
-    scaled = image.scaled(
-        target_w,
-        target_h,
-        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-    x = max(0, (scaled.width() - target_w) // 2)
-    y = max(0, (scaled.height() - target_h) // 2)
-    cropped = scaled.copy(x, y, target_w, target_h)
 
     pixmap = QPixmap(target_w, target_h)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -214,7 +221,26 @@ def rounded_image_pixmap(
         QRectF(0, 0, target_w, target_h), radius * dpr, radius * dpr
     )
     painter.setClipPath(path)
-    painter.drawImage(0, 0, cropped)
+    if fit:
+        scaled = image.scaled(
+            target_w,
+            target_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        x = (target_w - scaled.width()) // 2
+        y = (target_h - scaled.height()) // 2
+        painter.drawImage(x, y, scaled)
+    else:
+        scaled = image.scaled(
+            target_w,
+            target_h,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        x = max(0, (scaled.width() - target_w) // 2)
+        y = max(0, (scaled.height() - target_h) // 2)
+        painter.drawImage(0, 0, scaled.copy(x, y, target_w, target_h))
     painter.end()
     pixmap.setDevicePixelRatio(dpr)
     return pixmap
@@ -240,6 +266,289 @@ def repolish(widget: QWidget) -> None:
     widget.style().unpolish(widget)
     widget.style().polish(widget)
     widget.update()
+
+
+# ------------------------------------------------------------------------- animations
+def fade_in(widget: QWidget, duration: int = 170) -> None:
+    """Fade a freshly switched page in without leaving a permanent effect."""
+    previous = getattr(widget, "_fade_animation", None)
+    if previous is not None:
+        previous.stop()
+        widget._fade_animation = None
+    effect = QGraphicsOpacityEffect(widget)
+    effect.setOpacity(0.0)
+    widget.setGraphicsEffect(effect)
+    animation = QPropertyAnimation(effect, b"opacity", widget)
+    animation.setDuration(duration)
+    animation.setStartValue(0.0)
+    animation.setEndValue(1.0)
+    animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def finish() -> None:
+        if widget.graphicsEffect() is effect:
+            widget.setGraphicsEffect(None)
+        if getattr(widget, "_fade_animation", None) is animation:
+            widget._fade_animation = None
+
+    animation.finished.connect(finish)
+    widget._fade_animation = animation
+    animation.start(QPropertyAnimation.DeletionPolicy.KeepWhenStopped)
+
+
+class _SnapshotOverlay(QWidget):
+    """Static snapshot drawn with a fade, deliberately free of graphics effects.
+
+    QGraphicsOpacityEffect on a child of the shadowed panels is rendered with
+    an offset (nested effects), which made the old page appear as a floating
+    ghost. Painting the pixmap ourselves keeps the crossfade exactly on top of
+    the page it belongs to.
+
+    The overlay keeps mouse input while it fades: otherwise a click during the
+    transition reaches the freshly shown page and the old page (for the market
+    detail it is the previous product with its chart and prices) stays on
+    screen for a moment on top of the new one.
+    """
+
+    def __init__(self, parent: QWidget, pixmap: QPixmap) -> None:
+        super().__init__(parent)
+        self.setObjectName("CrossfadeOverlay")
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self._pixmap = pixmap
+        self._opacity = 1.0
+
+    def set_opacity(self, value: float) -> None:
+        self._opacity = max(0.0, min(1.0, value))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        if self._pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setOpacity(self._opacity)
+        painter.drawPixmap(self.rect(), self._pixmap)
+        painter.end()
+
+
+def clear_crossfade(stack: QStackedWidget) -> None:
+    """Drop a running snapshot fade, so the next page switch is immediate."""
+    animation = getattr(stack, "_crossfade_animation", None)
+    overlay = getattr(stack, "_crossfade_overlay", None)
+    if animation is not None:
+        animation.stop()
+    if overlay is not None:
+        overlay.hide()
+        overlay.deleteLater()
+    stack._crossfade_animation = None
+    stack._crossfade_overlay = None
+
+
+def crossfade_stack(
+    stack: QStackedWidget,
+    target: QWidget,
+    duration: int = 170,
+    update: Callable[[], None] | None = None,
+) -> None:
+    """Switch a stacked page with a snapshot crossfade.
+
+    The old view is captured before ``update`` runs, then faded out over the
+    new content. Unlike applying an opacity effect to a live stack page, this
+    cannot reveal hidden sibling pages and never blanks the area during the
+    switch. ``update`` also covers in-place rebuilds of the same page (for
+    example switching between history categories).
+    """
+    previous_animation = getattr(stack, "_crossfade_animation", None)
+    previous_overlay = getattr(stack, "_crossfade_overlay", None)
+    if previous_animation is not None:
+        previous_animation.stop()
+    if previous_overlay is not None:
+        previous_overlay.hide()
+        previous_overlay.deleteLater()
+        stack._crossfade_overlay = None
+
+    same_page = stack.currentWidget() is target
+    if same_page and update is None:
+        return
+
+    snapshot = None
+    if stack.isVisible() and stack.width() > 1 and stack.height() > 1:
+        snapshot = stack.grab()
+    if snapshot is None or snapshot.isNull():
+        if update is not None:
+            update()
+        if not same_page:
+            stack.setCurrentWidget(target)
+        return
+
+    # Снимок старого вида должен оказаться в заднем буфере ДО того, как
+    # покажется новая страница. Иначе окно успевает вывести один кадр новой
+    # страницы (в маркете это карточка товара с ценами и графиком), и только
+    # следующим кадром её накрывает снимок — получается вспышка.
+    overlay = _SnapshotOverlay(stack, snapshot)
+    overlay.setGeometry(stack.rect())
+    overlay.show()
+    overlay.raise_()
+    overlay.repaint()
+    stack._crossfade_overlay = overlay
+
+    if update is not None:
+        update()
+    if not same_page:
+        stack.setCurrentWidget(target)
+    overlay.raise_()
+    # Страница могла успеть отрисоваться прямо во время переключения —
+    # возвращаем снимок наверх синхронно, до следующего кадра.
+    overlay.repaint()
+
+    animation = QVariantAnimation(overlay)
+    animation.setDuration(duration)
+    animation.setStartValue(1.0)
+    animation.setEndValue(0.0)
+    animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+    animation.valueChanged.connect(
+        lambda value: overlay.set_opacity(float(value))
+    )
+
+    def finish() -> None:
+        if getattr(stack, "_crossfade_overlay", None) is overlay:
+            stack._crossfade_overlay = None
+            overlay.hide()
+            overlay.deleteLater()
+        if getattr(stack, "_crossfade_animation", None) is animation:
+            stack._crossfade_animation = None
+
+    animation.finished.connect(finish)
+    stack._crossfade_overlay = overlay
+    stack._crossfade_animation = animation
+    animation.start(QVariantAnimation.DeletionPolicy.KeepWhenStopped)
+
+
+class HoverSurface:
+    """Animated hover tint for cards, 120-180 ms.
+
+    The QSS still owns the resting look; this mixin only paints a smooth
+    transition towards the hover surface colour, so no per-colour styles are
+    needed and both themes keep working through the design tokens.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._hover_progress = 0.0
+        self._hover_animation = QVariantAnimation(self)
+        self._hover_animation.setDuration(150)
+        self._hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_animation.valueChanged.connect(self._on_hover_value)
+
+    def _on_hover_value(self, value: float) -> None:
+        self._hover_progress = float(value)
+        self.update()
+
+    def _animate_hover(self, target: float) -> None:
+        animation = getattr(self, "_hover_animation", None)
+        if animation is None:
+            return
+        animation.stop()
+        animation.setStartValue(self._hover_progress)
+        animation.setEndValue(target)
+        animation.start()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._animate_hover(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._animate_hover(0.0)
+        super().leaveEvent(event)
+
+    def _hover_palette(self) -> tuple[str, str, float]:
+        tokens = design.tokens(theme.active_theme())
+        return tokens.card, tokens.card_hover, float(design.RADIUS["card"])
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        progress = getattr(self, "_hover_progress", 0.0)
+        base, hover, radius = self._hover_palette()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(design.blend(base, hover, progress))
+        inset = 1.6
+        rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+        painter.drawRoundedRect(rect, radius - inset, radius - inset)
+
+
+class HoverCard(HoverSurface, QFrame):
+    """QFrame with the animated card hover surface."""
+
+
+class PressFeedback(QObject):
+    """Short, subtle press feedback for every button (100-150 ms)."""
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if isinstance(obj, QAbstractButton) and obj.isEnabled():
+            kind = event.type()
+            if kind == QEvent.Type.MouseButtonPress:
+                self._animate(obj, 0.88, 110, remove=False)
+            elif kind in (
+                QEvent.Type.MouseButtonRelease,
+                QEvent.Type.Leave,
+            ):
+                # Только если кнопка действительно была нажата. Раньше эффект
+                # создавался даже при обычном уходе курсора, из-за чего
+                # кнопка/подпись на мгновение пропадала.
+                if getattr(obj, "_press_effect", None) is not None:
+                    self._animate(obj, 1.0, 120, remove=True)
+        return False
+
+    @staticmethod
+    def _animate(
+        button: QAbstractButton,
+        target: float,
+        duration: int,
+        *,
+        remove: bool,
+    ) -> None:
+        animation = getattr(button, "_press_animation", None)
+        if animation is not None:
+            animation.stop()
+        effect = getattr(button, "_press_effect", None)
+        if effect is None:
+            if button.graphicsEffect() is not None:
+                return
+            effect = QGraphicsOpacityEffect(button)
+            effect.setOpacity(1.0)
+            button._press_effect = effect
+            button.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", button)
+        animation.setDuration(duration)
+        animation.setStartValue(effect.opacity())
+        animation.setEndValue(target)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        def finish() -> None:
+            if remove and getattr(button, "_press_effect", None) is effect:
+                button.setGraphicsEffect(None)
+                button._press_effect = None
+            if getattr(button, "_press_animation", None) is animation:
+                button._press_animation = None
+
+        animation.finished.connect(finish)
+        button._press_animation = animation
+        animation.start()
+
+
+def install_press_feedback(app: QApplication) -> PressFeedback:
+    """Install one application-wide press animator (idempotent)."""
+    existing = getattr(app, "_galardo_press_feedback", None)
+    if isinstance(existing, PressFeedback):
+        return existing
+    feedback = PressFeedback(app)
+    app._galardo_press_feedback = feedback
+    app.installEventFilter(feedback)
+    return feedback
 
 
 # ---------------------------------------------------------------------------- labels
@@ -316,6 +625,24 @@ class ClickableFrame(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+
+class HoverClickableFrame(HoverSurface, ClickableFrame):
+    """Clickable frame with the animated card hover surface."""
+
+
+class HoverHeader(HoverClickableFrame):
+    """Week header with its own neutral header palette."""
+
+    def _hover_palette(self) -> tuple[str, str, float]:
+        theme_name = theme.active_theme()
+        tokens = design.tokens(theme_name)
+        light = theme_name == "light"
+        base = design.mix(tokens.panel, tokens.surface, 0.30 if not light else 0.55)
+        hover = design.mix(
+            tokens.panel, tokens.surface_hover, 0.42 if not light else 0.78
+        )
+        return base, hover, float(design.RADIUS["header"])
 
 
 class ClickableLineEdit(QLineEdit):
@@ -400,6 +727,7 @@ class PopupBase(QWidget):
         shadow = QGraphicsDropShadowEffect(self.card)
         shadow.setBlurRadius(30)
         shadow.setOffset(0, 8)
+        self._shadow = shadow
         shadow.setColor(QColor(0, 0, 0, 170))
         self.card.setGraphicsEffect(shadow)
         outer.addWidget(self.card)
@@ -409,6 +737,11 @@ class PopupBase(QWidget):
         self.body.setSpacing(10)
 
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self).activated.connect(self.close)
+
+    def refresh_shadow(self, theme_name: str, accent: str) -> None:
+        self._shadow.setColor(
+            theme.shadow_color(theme_name, accent, strong=True)
+        )
 
     def show_at(self, anchor: QWidget) -> None:
         self.adjustSize()
@@ -543,14 +876,15 @@ def _color_dot(color: str) -> QPixmap:
 
 
 def _swatch_style(color: str, selected: bool, theme_name: str) -> str:
-    ring = "#1B1F24" if theme_name == "light" else "#F4F5F7"
-    hover = "rgba(0, 0, 0, 120)" if theme_name == "light" else "rgba(255, 255, 255, 150)"
+    tokens = design.tokens(theme_name)
+    ring = tokens.text
+    hover = design.rgba(tokens.text, 0.45)
     border = f"2px solid {ring}" if selected else "2px solid transparent"
     return (
         "QPushButton {"
         f" background-color: {color};"
         f" border: {border};"
-        " border-radius: 13px;"
+        " border-radius: 14px;"
         " padding: 0px;"
         " min-width: 0px;"
         "}"
@@ -561,13 +895,11 @@ def _swatch_style(color: str, selected: bool, theme_name: str) -> str:
 class SettingsPopup(PopupBase):
     accentChanged = Signal(str)
     themeChanged = Signal(str)
-    photoBackgroundChanged = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._accent = theme.DEFAULT_ACCENT
         self._theme_name = theme.DEFAULT_THEME
-        self._photo_bg = True
 
         title = QLabel("Оформление")
         title.setObjectName("PopupTitle")
@@ -577,8 +909,7 @@ class SettingsPopup(PopupBase):
         hint.setObjectName("PopupHint")
         self.body.addWidget(hint)
 
-        theme_label = QLabel("Тема")
-        theme_label.setObjectName("PopupSection")
+        theme_label = ui_kit.SectionHeader("Тема")
         self.body.addWidget(theme_label)
 
         theme_row = QHBoxLayout()
@@ -597,8 +928,7 @@ class SettingsPopup(PopupBase):
         theme_row.addStretch(1)
         self.body.addLayout(theme_row)
 
-        accent_label = QLabel("Вторичный цвет")
-        accent_label.setObjectName("PopupSection")
+        accent_label = ui_kit.SectionHeader("Вторичный цвет")
         self.body.addWidget(accent_label)
 
         accent_row = QHBoxLayout()
@@ -606,7 +936,7 @@ class SettingsPopup(PopupBase):
         self._swatches: dict[str, QPushButton] = {}
         for key, (color, name) in theme.ACCENTS.items():
             button = QPushButton()
-            button.setFixedSize(26, 26)
+            button.setFixedSize(28, 28)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(name)
             button.clicked.connect(
@@ -626,24 +956,32 @@ class SettingsPopup(PopupBase):
         self._custom_button.clicked.connect(self._pick_custom_accent)
         self.body.addWidget(self._custom_button)
 
-        self._photo_button = QPushButton("Фото на фоне")
-        self._photo_button.setObjectName("PopupGhost")
-        self._photo_button.setCheckable(True)
-        self._photo_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._photo_button.setToolTip("Логотип GALARDO за панелями")
-        self._photo_button.toggled.connect(self._on_photo_toggled)
-        self.body.addWidget(self._photo_button)
+        preview = QFrame()
+        preview.setObjectName("AccentPreview")
+        preview_row = QHBoxLayout(preview)
+        preview_row.setContentsMargins(10, 7, 10, 7)
+        preview_row.setSpacing(9)
+        dot = QLabel()
+        dot.setObjectName("AccentPreviewDot")
+        dot.setFixedSize(14, 14)
+        preview_row.addWidget(dot)
+        caption = QLabel("Текущий акцент")
+        caption.setObjectName("AccentPreviewLabel")
+        preview_row.addWidget(caption)
+        preview_row.addStretch(1)
+        self._accent_value = QLabel(self._accent.upper())
+        self._accent_value.setObjectName("AccentPreviewValue")
+        preview_row.addWidget(self._accent_value)
+        self.body.addWidget(preview)
 
     def open_for(
         self,
         anchor: QWidget,
         accent: str,
         theme_name: str,
-        photo_bg: bool,
     ) -> None:
         self._accent = accent
         self._theme_name = theme_name if theme_name in theme.THEMES else theme.DEFAULT_THEME
-        self._photo_bg = photo_bg
         self.blockSignals(True)
         self._sync()
         self.blockSignals(False)
@@ -661,14 +999,7 @@ class SettingsPopup(PopupBase):
         presets = {color.lower() for color, _ in theme.ACCENTS.values()}
         self._custom_button.setChecked(self._accent.lower() not in presets)
         self._custom_button.setIcon(_color_dot(self._accent))
-        self._photo_button.setChecked(self._photo_bg)
-        dark = self._theme_name == "dark"
-        self._photo_button.setEnabled(dark)
-        self._photo_button.setToolTip(
-            "Логотип GALARDO за панелями"
-            if dark
-            else "Фото фона доступно в чёрной теме"
-        )
+        self._accent_value.setText(self._accent.upper())
 
     def _choose_theme(self, key: str) -> None:
         self._theme_name = key
@@ -698,20 +1029,20 @@ class SettingsPopup(PopupBase):
             self.show()
             self.raise_()
 
-    def _on_photo_toggled(self, checked: bool) -> None:
-        self._photo_bg = checked
-        self.photoBackgroundChanged.emit(checked)
-
 
 # ----------------------------------------------------------------------------- photo
 class PhotoDrop(QFrame):
+    photoAdded = Signal()
+    photoReplaced = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("PhotoDrop")
         self.setProperty("filled", False)
-        self.setFixedHeight(100)
+        self.setFixedHeight(104)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAcceptDrops(True)
+        self.setToolTip("Ctrl+V — вставить фото из буфера обмена")
 
         self._bytes: bytes | None = None
         self._image: QImage | None = None
@@ -720,20 +1051,20 @@ class PhotoDrop(QFrame):
         self._empty_pixmap = icons.icon_pixmap(
             "photo", theme.icon_tone("text"), 96
         ).scaled(
-            52,
-            52,
+            48,
+            48,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self._empty_pixmap.setDevicePixelRatio(2.0)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 12, 12, 12)
-        layout.setSpacing(13)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
 
         self._preview = QLabel()
         self._preview.setObjectName("PhotoIcon")
-        self._preview.setFixedSize(54, 54)
+        self._preview.setFixedSize(72, 72)
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview.setPixmap(self._empty_pixmap)
         layout.addWidget(self._preview)
@@ -741,10 +1072,10 @@ class PhotoDrop(QFrame):
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(3)
-        self._title = QLabel("Вставьте фото из буфера обмена")
+        self._title = QLabel("Добавить фотографию")
         self._title.setObjectName("PhotoTitle")
         self._title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._hint = QLabel("Ctrl+V или нажмите, чтобы выбрать файл")
+        self._hint = QLabel("Перетащите изображение или нажмите для выбора")
         self._hint.setObjectName("PhotoHint")
         self._hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._hint.setWordWrap(True)
@@ -752,16 +1083,33 @@ class PhotoDrop(QFrame):
         text_layout.addWidget(self._hint)
         layout.addLayout(text_layout, 1)
 
-        self._clear = QToolButton()
-        self._clear.setObjectName("IconBtn")
-        self._clear.setIcon(icons.icon("close", theme.icon_tone("muted")))
-        self._clear.setIconSize(QSize(12, 12))
-        self._clear.setFixedSize(24, 24)
+        actions = QVBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(5)
+
+        self._replace = QPushButton("Заменить")
+        self._replace.setObjectName("Chip")
+        self._replace.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._replace.setFixedHeight(28)
+        self._replace.setIconSize(QSize(13, 13))
+        self._replace.setToolTip("Заменить фотографию")
+        self._replace.setIcon(icons.icon("pencil", theme.icon_tone("muted")))
+        self._replace.clicked.connect(self._pick)
+        self._replace.hide()
+        actions.addWidget(self._replace)
+
+        self._clear = QPushButton("Удалить")
+        self._clear.setObjectName("Chip")
         self._clear.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._clear.setToolTip("Убрать фото")
+        self._clear.setFixedHeight(28)
+        self._clear.setIconSize(QSize(13, 13))
+        self._clear.setToolTip("Удалить фотографию")
+        self._clear.setIcon(icons.icon("trash", theme.icon_tone("muted")))
         self._clear.clicked.connect(self.clear)
         self._clear.hide()
-        layout.addWidget(self._clear, 0, Qt.AlignmentFlag.AlignTop)
+        actions.addWidget(self._clear)
+
+        layout.addLayout(actions)
 
     # ------------------------------------------------------------------ public
     def photo_bytes(self) -> bytes | None:
@@ -790,10 +1138,15 @@ class PhotoDrop(QFrame):
     def set_image(self, image: QImage, file_name: str = "") -> None:
         if image.isNull():
             return
+        had_photo = bool(self._bytes)
         self._image = image
         self._bytes = image_to_jpeg(image)
         self._file_name = file_name
         self._update_view()
+        if had_photo:
+            self.photoReplaced.emit()
+        else:
+            self.photoAdded.emit()
 
     def set_bytes(self, data: bytes | None, file_name: str = "") -> None:
         if not data:
@@ -815,23 +1168,29 @@ class PhotoDrop(QFrame):
         self.setProperty("filled", False)
         repolish(self)
         self._preview.setPixmap(self._empty_pixmap)
-        self._title.setText("Вставьте фото из буфера обмена")
-        self._hint.setText("Ctrl+V или нажмите, чтобы выбрать файл")
+        self._title.setText("Добавить фотографию")
+        self._hint.setText("Перетащите изображение или нажмите для выбора")
         self._hint.setToolTip("")
+        self._replace.hide()
         self._clear.hide()
 
     def refresh_icons(self) -> None:
         self._empty_pixmap = icons.icon_pixmap(
             "photo", theme.icon_tone("text"), 96
         ).scaled(
-            52,
-            52,
+            48,
+            48,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self._empty_pixmap.setDevicePixelRatio(2.0)
-        self._clear.setIcon(icons.icon("close", theme.icon_tone("muted")))
-        if not self.has_photo():
+        self._replace.setIcon(icons.icon("pencil", theme.icon_tone("muted")))
+        self._clear.setIcon(icons.icon("trash", theme.icon_tone("muted")))
+        if self.has_photo() and self._image is not None:
+            self._preview.setPixmap(
+                rounded_image_pixmap(self._image, 72, 72, 12.0)
+            )
+        else:
             self._preview.setPixmap(self._empty_pixmap)
 
     # ------------------------------------------------------------------ events
@@ -893,12 +1252,13 @@ class PhotoDrop(QFrame):
         self.setProperty("filled", True)
         repolish(self)
         self._preview.setPixmap(
-            rounded_image_pixmap(self._image, 54, 54, 10.0)
+            rounded_image_pixmap(self._image, 72, 72, 12.0)
         )
-        self._title.setText("Фото прикреплено")
-        hint = self._file_name or "Нажмите, чтобы заменить · Ctrl+V"
+        self._title.setText("Фотография добавлена")
+        hint = self._file_name or "Нажмите на область, чтобы заменить"
         self._hint.setText(hint)
         self._hint.setToolTip(safe_tooltip(self._file_name) if self._file_name else "")
+        self._replace.show()
         self._clear.show()
 
     @staticmethod
@@ -981,9 +1341,10 @@ class DragHandle(QLabel):
                 painter.drawEllipse(QRectF(x - radius, y - radius, radius * 2, radius * 2))
 
 
-class DealCard(QFrame):
+class DealCard(HoverCard):
     editRequested = Signal(int)
     deleteRequested = Signal(int)
+    copyRequested = Signal(int)
     quickRequested = Signal(int, str)
     photoRequested = Signal(int)
     statsRequested = Signal(int)
@@ -991,21 +1352,40 @@ class DealCard(QFrame):
     def __init__(self, deal: Deal, currency: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.deal = deal
+        self._photo_bytes = deal.photo
+        self._photo_clickable = False
         self.setObjectName("DealCard")
         self.setProperty("side", deal.side)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._drag_handle: DragHandle | None = None
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
+        self._main_layout = QHBoxLayout(self)
+        self._main_layout.setContentsMargins(12, 10, 10, 10)
+        self._main_layout.setSpacing(12)
+
+        self._thumb = QLabel()
+        self._thumb.setObjectName("DealThumb")
+        self._thumb.setFixedSize(52, 52)
+        self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._main_layout.addWidget(self._thumb, 0, Qt.AlignmentFlag.AlignTop)
+        self._set_thumb()
+
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(5)
 
         header = QHBoxLayout()
-        header.setSpacing(6)
-        self._header_layout = header
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(7)
+        badge = ui_kit.Badge(
+            "Купил" if deal.side == "buy" else "Продал",
+            tone="loss" if deal.side == "buy" else "profit",
+        )
+        header.addWidget(badge)
+
         title = ElidedLabel(deal.product)
         title.setObjectName("DealTitle")
-        title.setMinimumWidth(80)
+        title.setMinimumWidth(70)
         title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         title.setCursor(Qt.CursorShape.PointingHandCursor)
         title.setToolTip(
@@ -1014,37 +1394,37 @@ class DealCard(QFrame):
         title.clicked.connect(lambda: self.statsRequested.emit(deal.id))
         header.addWidget(title, 1)
 
-        edit_button = make_icon_button("pencil", "Редактировать сделку")
-        edit_button.clicked.connect(lambda: self.editRequested.emit(deal.id))
-        header.addWidget(edit_button)
-        self._edit_button = edit_button
-
-        delete_button = make_icon_button("trash", "Удалить сделку")
-        delete_button.clicked.connect(lambda: self.deleteRequested.emit(deal.id))
-        header.addWidget(delete_button)
-        self._delete_button = delete_button
-        layout.addLayout(header)
-
-        meta = QHBoxLayout()
-        meta.setSpacing(8)
-        badge = QLabel("Купил" if deal.side == "buy" else "Продал")
-        badge.setObjectName("BadgeBuy" if deal.side == "buy" else "BadgeSell")
-        meta.addWidget(badge)
-
         amount = QLabel(format_money(deal.signed_amount, currency))
         amount.setObjectName("AmountBuy" if deal.side == "buy" else "AmountSell")
-        meta.addWidget(amount)
-        meta.addStretch(1)
+        header.addWidget(amount, 0, Qt.AlignmentFlag.AlignVCenter)
+        body.addLayout(header)
 
+        meta = QHBoxLayout()
+        meta.setContentsMargins(0, 0, 0, 0)
+        meta.setSpacing(5)
+        category = QLabel(CATEGORIES.get(deal.category, deal.category))
+        category.setObjectName("DealCategory")
+        meta.addWidget(category)
+        dot = QLabel("·")
+        dot.setObjectName("DealMetaDot")
+        meta.addWidget(dot)
         date = QDateTime.fromString(deal.dealt_at, Qt.DateFormat.ISODate)
         date_text = date.toString("dd.MM.yy HH:mm") if date.isValid() else deal.dealt_at
         date_label = QLabel(date_text)
         date_label.setObjectName("DealDate")
-        meta.addWidget(date_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        layout.addLayout(meta)
+        meta.addWidget(date_label)
+        meta.addStretch(1)
+        body.addLayout(meta)
+
+        if deal.comment:
+            comment = ElidedLabel(deal.comment)
+            comment.setObjectName("DealComment")
+            comment.setToolTip(safe_tooltip(deal.comment))
+            body.addWidget(comment)
 
         actions = QHBoxLayout()
-        actions.setSpacing(7)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
         sell_same = QPushButton("Продал такое")
         sell_same.setObjectName("Chip")
         sell_same.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1057,39 +1437,99 @@ class DealCard(QFrame):
         buy_same.clicked.connect(lambda: self.quickRequested.emit(deal.id, "buy"))
         actions.addWidget(buy_same)
         actions.addStretch(1)
+        body.addLayout(actions)
+        self._main_layout.addLayout(body, 1)
 
-        if deal.photo:
-            image = QImage.fromData(deal.photo)
-            if not image.isNull():
-                thumb = ClickableLabel()
-                thumb.setFixedSize(40, 40)
-                thumb.setCursor(Qt.CursorShape.PointingHandCursor)
-                thumb.setToolTip("Открыть фото")
-                thumb.setPixmap(rounded_image_pixmap(image, 40, 40, 8.0))
-                thumb.clicked.connect(lambda: self.photoRequested.emit(deal.id))
-                actions.addWidget(thumb, 0, Qt.AlignmentFlag.AlignVCenter)
-        layout.addLayout(actions)
+        actions_column = QVBoxLayout()
+        actions_column.setContentsMargins(0, 0, 0, 0)
+        actions_column.setSpacing(3)
+        actions_column.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        if deal.comment:
-            comment = QLabel(deal.comment)
-            comment.setObjectName("DealComment")
-            comment.setTextFormat(Qt.TextFormat.PlainText)
-            comment.setWordWrap(True)
-            comment.setToolTip(safe_tooltip(deal.comment))
-            layout.addWidget(comment)
+        edit_button = make_icon_button("pencil", "Редактировать сделку")
+        edit_button.clicked.connect(lambda: self.editRequested.emit(deal.id))
+        actions_column.addWidget(edit_button)
+        self._edit_button = edit_button
+
+        delete_button = make_icon_button("trash", "Удалить сделку")
+        delete_button.clicked.connect(lambda: self.deleteRequested.emit(deal.id))
+        actions_column.addWidget(delete_button)
+        self._delete_button = delete_button
+
+        copy_button = make_icon_button("copy", "Копировать сделку")
+        copy_button.clicked.connect(lambda: self.copyRequested.emit(deal.id))
+        actions_column.addWidget(copy_button)
+        self._copy_button = copy_button
+
+        self._main_layout.addLayout(actions_column)
+
+    def _hover_palette(self) -> tuple[str, str, float]:
+        theme_name = theme.active_theme()
+        tokens = design.tokens(theme_name)
+        light = theme_name == "light"
+        if bool(self.property("embedded")):
+            base = design.mix(tokens.card, tokens.bg, 0.30 if not light else 0.18)
+            hover = design.mix(
+                tokens.card, tokens.surface_hover, 0.45 if not light else 0.55
+            )
+            return base, hover, float(design.RADIUS["row"])
+        return tokens.card, tokens.card_hover, float(design.RADIUS["card"])
+
+    def _set_thumb(self) -> None:
+        image = QImage.fromData(self._photo_bytes) if self._photo_bytes else QImage()
+        if not image.isNull():
+            thumb = ClickableLabel()
+            thumb.setObjectName("DealThumb")
+            thumb.setFixedSize(52, 52)
+            thumb.setCursor(Qt.CursorShape.PointingHandCursor)
+            thumb.setToolTip("Открыть фото")
+            thumb.setPixmap(rounded_image_pixmap(image, 52, 52, 10.0))
+            thumb.clicked.connect(
+                lambda: self.photoRequested.emit(self.deal.id)
+            )
+            old = self._main_layout.itemAt(0).widget()
+            self._main_layout.replaceWidget(old, thumb)
+            old.deleteLater()
+            self._thumb = thumb
+            self._photo_clickable = True
+            return
+
+        pixmap = icons.icon_pixmap(
+            "photo", theme.icon_tone("faint"), 72
+        ).scaled(
+            24,
+            24,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._thumb.setPixmap(pixmap)
+        self._thumb.setCursor(Qt.CursorShape.ArrowCursor)
+        self._thumb.setToolTip("Фото не добавлено")
+        self._photo_clickable = False
 
     def enable_drag(self, deal_ids: list[int], week: int) -> None:
         if self._drag_handle is not None:
             return
         self._drag_handle = DragHandle(deal_ids, week, self)
-        self._header_layout.insertWidget(0, self._drag_handle)
+        self._main_layout.insertWidget(0, self._drag_handle)
 
     def refresh_icons(self) -> None:
         tone = theme.icon_tone("muted")
         self._edit_button.setIcon(icons.icon("pencil", tone))
         self._delete_button.setIcon(icons.icon("trash", tone))
+        self._copy_button.setIcon(icons.icon("copy", tone))
+        if not self._photo_clickable:
+            pixmap = icons.icon_pixmap(
+                "photo", theme.icon_tone("faint"), 72
+            ).scaled(
+                24,
+                24,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._thumb.setPixmap(pixmap)
         if self._drag_handle is not None:
             self._drag_handle.update()
+
 
 
 # ------------------------------------------------------------------------- week group
@@ -1114,28 +1554,35 @@ class WeekSection(QWidget):
         self._week = week
         self._drop_ids: list[int] | None = None
         self._drop_index = 0
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(7)
 
-        self._header = ClickableFrame()
+        self._header = HoverHeader()
         self._header.setObjectName("WeekHeader")
         self._header.setCursor(Qt.CursorShape.PointingHandCursor)
         header = QHBoxLayout(self._header)
-        header.setContentsMargins(10, 7, 12, 7)
-        header.setSpacing(8)
+        header.setContentsMargins(11, 8, 13, 8)
+        header.setSpacing(9)
 
         self._chevron = QLabel("▾" if expanded else "▸")
         self._chevron.setObjectName("WeekChevron")
         self._chevron.setFixedWidth(12)
         header.addWidget(self._chevron)
 
-        title = QLabel(
-            f"Неделя {number} · {start.toString('dd.MM')} – {end.toString('dd.MM')}"
+        number_label = QLabel(f"Неделя {number}")
+        number_label.setObjectName("WeekNumber")
+        header.addWidget(number_label)
+
+        range_label = QLabel(
+            f"{start.toString('dd.MM')} – {end.toString('dd.MM')}"
         )
-        title.setObjectName("WeekTitle")
-        header.addWidget(title)
+        range_label.setObjectName("WeekRange")
+        header.addWidget(range_label)
         header.addStretch(1)
 
         meta = QLabel(f"{count} {deals_word(count)}")
@@ -1144,18 +1591,30 @@ class WeekSection(QWidget):
 
         amount = QLabel(format_money(total, currency))
         amount.setObjectName("WeekAmount")
+        amount.setProperty(
+            "state",
+            "positive" if total > 0.004 else "negative" if total < -0.004 else "",
+        )
         header.addWidget(amount)
         outer.addWidget(self._header)
 
-        self.body = QWidget()
+        # Parent from the start: a parentless QWidget shown before being added
+        # to a layout briefly becomes a native top-level window (a visible
+        # flash plus a focus flicker) every time the history is rebuilt.
+        self.body = QWidget(self)
         self.body.setObjectName("WeekBody")
         self.body.setAcceptDrops(True)
         self.body.installEventFilter(self)
         self.body_layout = QVBoxLayout(self.body)
         self.body_layout.setContentsMargins(0, 0, 0, 0)
-        self.body_layout.setSpacing(9)
+        self.body_layout.setSpacing(8)
         self.body.setVisible(expanded)
         outer.addWidget(self.body)
+
+        self._animation = QPropertyAnimation(self.body, b"maximumHeight", self)
+        self._animation.setDuration(200)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.finished.connect(self._on_expand_finished)
 
         self._drop_line = QFrame(self.body)
         self._drop_line.setObjectName("DropLine")
@@ -1179,9 +1638,43 @@ class WeekSection(QWidget):
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
-        self.body.setVisible(self._expanded)
         self._chevron.setText("▾" if self._expanded else "▸")
+        self._animation.stop()
+        if self._expanded:
+            self.body.setMaximumHeight(0)
+            self.body.setVisible(True)
+            self.body.updateGeometry()
+            target = self.body.sizeHint().height()
+            self._animation.setStartValue(0)
+            self._animation.setEndValue(max(0, target))
+            self._animation.start()
+        else:
+            self.body.setVisible(False)
+            self.body.setMaximumHeight(0)
+            layout = self.layout()
+            if layout is not None:
+                layout.invalidate()
+            self.updateGeometry()
+            QTimer.singleShot(0, self._sync_collapsed_layout)
         self.toggled.emit(self._expanded)
+
+    def _sync_collapsed_layout(self) -> None:
+        if self._expanded:
+            return
+        layout = self.layout()
+        if layout is not None:
+            layout.invalidate()
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent_layout = parent.layout()
+            if parent_layout is not None:
+                parent_layout.invalidate()
+            parent.updateGeometry()
+
+    def _on_expand_finished(self) -> None:
+        if self._expanded:
+            self.body.setMaximumHeight(16777215)
 
     # ------------------------------------------------------------- drag & drop
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -1277,11 +1770,14 @@ class WeekSection(QWidget):
 
 
 # ------------------------------------------------------------------------- pair group
-class PairSection(QWidget):
-    """Свёрнутая пара «покупка + продажа» одного предмета."""
+class PairSection(QFrame):
+    """Единая карточка связанной пары «покупка + продажа»."""
 
     toggled = Signal(bool)
     statsRequested = Signal(int)
+    editRequested = Signal(int)
+    deleteRequested = Signal(int)
+    copyRequested = Signal(int)
 
     def __init__(
         self,
@@ -1297,17 +1793,41 @@ class PairSection(QWidget):
         self._header_layout: QHBoxLayout | None = None
         members = [deal] + list(children)
         total = sum(item.signed_amount for item in members)
+        sale_total = sum(item.amount for item in children)
+        state = (
+            "positive" if total > 0.004 else "negative" if total < -0.004 else ""
+        )
 
-        outer = QVBoxLayout(self)
+        self.setObjectName("PairCard")
+        self.setProperty("state", state)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
+
+        outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(7)
+        outer.setSpacing(0)
+
+        self._strip = QFrame()
+        self._strip.setObjectName("PairStrip")
+        self._strip.setProperty("state", state)
+        self._strip.setFixedWidth(3)
+        outer.addWidget(self._strip)
+
+        content = QWidget()
+        content.setObjectName("PairContent")
+        inner = QVBoxLayout(content)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
+        outer.addWidget(content, 1)
 
         self._header = ClickableFrame()
         self._header.setObjectName("PairHeader")
         self._header.setCursor(Qt.CursorShape.PointingHandCursor)
         header = QHBoxLayout(self._header)
-        header.setContentsMargins(9, 7, 12, 7)
-        header.setSpacing(8)
+        header.setContentsMargins(10, 9, 10, 9)
+        header.setSpacing(9)
         self._header_layout = header
 
         self._chevron = QLabel("▾" if expanded else "▸")
@@ -1315,6 +1835,22 @@ class PairSection(QWidget):
         self._chevron.setFixedWidth(12)
         header.addWidget(self._chevron)
 
+        self._thumb = QLabel()
+        self._thumb.setObjectName("DealThumb")
+        self._thumb.setFixedSize(48, 48)
+        self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumb.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        header.addWidget(self._thumb, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(4)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
         title = ElidedLabel(deal.product)
         title.setObjectName("PairTitle")
         title.setMinimumWidth(80)
@@ -1323,43 +1859,118 @@ class PairSection(QWidget):
             safe_tooltip(f"{deal.product} · статистика за 30 дней")
         )
         title.clicked.connect(lambda: self.statsRequested.emit(deal.id))
-        header.addWidget(title, 1)
-
-        if len(children) == 1:
-            meta_text = (
-                f"Продал "
-                f"{format_money(children[0].amount, currency, with_sign=False)}"
-                f" · Купил "
-                f"{format_money(deal.amount, currency, with_sign=False)}"
-            )
-        else:
-            meta_text = (
-                f"{len(children)} {_sales_word(len(children))} · Покупка "
-                f"{format_money(deal.amount, currency, with_sign=False)}"
-            )
-        meta = QLabel(meta_text)
-        meta.setObjectName("PairMeta")
-        header.addWidget(meta)
+        title_row.addWidget(title, 1)
 
         profit = QLabel(format_money(total, currency))
         profit.setObjectName("PairProfit")
-        profit.setProperty(
-            "state", "positive" if total > 0.004 else "negative" if total < -0.004 else ""
-        )
-        header.addWidget(profit)
-        outer.addWidget(self._header)
+        profit.setProperty("state", state)
+        title_row.addWidget(profit, 0, Qt.AlignmentFlag.AlignVCenter)
+        body.addLayout(title_row)
 
-        self.body = QWidget()
+        start_dt = QDateTime.fromString(deal.dealt_at, Qt.DateFormat.ISODate)
+        dates = [
+            QDateTime.fromString(item.dealt_at, Qt.DateFormat.ISODate)
+            for item in members
+        ]
+        dates = [item for item in dates if item.isValid()]
+        if dates:
+            first = min(dates)
+            last = max(dates)
+            if first.date() == last.date():
+                date_text = first.toString("dd.MM.yy")
+            else:
+                date_text = (
+                    f"{first.toString('dd.MM.yy')} → {last.toString('dd.MM.yy')}"
+                )
+        elif start_dt.isValid():
+            date_text = start_dt.toString("dd.MM.yy")
+        else:
+            date_text = deal.dealt_at
+
+        # одна эластичная строка: на узком окне хвост аккуратно сокращается,
+        # а не выталкивает цены и кнопки за правый край карточки
+        meta_text = (
+            f"Покупка {format_money(deal.amount, currency, with_sign=False)}"
+            " · "
+            f"Продажа {format_money(sale_total, currency, with_sign=False)}"
+            f" · {date_text}"
+        )
+        meta = ElidedLabel(meta_text)
+        meta.setObjectName("PairMeta")
+        meta.setToolTip(safe_tooltip(meta_text))
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(0)
+        meta_row.addWidget(meta, 1)
+        body.addLayout(meta_row)
+        header.addLayout(body, 1)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(3)
+        edit_button = make_icon_button("pencil", "Редактировать покупку")
+        edit_button.clicked.connect(lambda: self.editRequested.emit(deal.id))
+        actions.addWidget(edit_button)
+        self._edit_button = edit_button
+
+        delete_button = make_icon_button("trash", "Удалить покупку")
+        delete_button.clicked.connect(lambda: self.deleteRequested.emit(deal.id))
+        actions.addWidget(delete_button)
+        self._delete_button = delete_button
+
+        copy_button = make_icon_button("copy", "Копировать пару")
+        copy_button.clicked.connect(lambda: self.copyRequested.emit(deal.id))
+        actions.addWidget(copy_button)
+        self._copy_button = copy_button
+        header.addLayout(actions)
+        inner.addWidget(self._header)
+
+        self.body = QWidget(self)
         self.body.setObjectName("PairBody")
         self.body_layout = QVBoxLayout(self.body)
-        self.body_layout.setContentsMargins(20, 0, 0, 0)
-        self.body_layout.setSpacing(7)
+        self.body_layout.setContentsMargins(16, 0, 12, 10)
+        self.body_layout.setSpacing(6)
         self.body.setVisible(expanded)
-        outer.addWidget(self.body)
+        inner.addWidget(self.body)
+
+        self._animation = QPropertyAnimation(self.body, b"maximumHeight", self)
+        self._animation.setDuration(180)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.finished.connect(self._on_expand_finished)
 
         self._header.clicked.connect(self._toggle)
+        self._set_thumb()
+        self._apply_photo(deal, children)
+
+    def _apply_photo(self, deal: Deal, children: list[Deal]) -> None:
+        self._photo_deal = deal
+        for item in children:
+            if item.photo:
+                self._photo_deal = item
+                break
+        self._set_thumb()
+
+    def _set_thumb(self) -> None:
+        data = getattr(self, "_photo_deal", None)
+        image = QImage.fromData(data.photo) if data and data.photo else QImage()
+        if not image.isNull():
+            self._thumb.setPixmap(rounded_image_pixmap(image, 48, 48, 9.0))
+            self._thumb.setToolTip("Открыть фото")
+        else:
+            pixmap = icons.icon_pixmap(
+                "photo", theme.icon_tone("faint"), 72
+            ).scaled(
+                22,
+                22,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._thumb.setPixmap(pixmap)
+            self._thumb.setToolTip("Фото не добавлено")
 
     def add_card(self, card: QWidget) -> None:
+        card.setProperty("embedded", True)
+        repolish(card)
         self.body_layout.addWidget(card)
 
     def enable_drag(self, deal_ids: list[int], week: int) -> None:
@@ -1369,6 +1980,11 @@ class PairSection(QWidget):
         self._header_layout.insertWidget(1, self._drag_handle)
 
     def refresh_icons(self) -> None:
+        tone = theme.icon_tone("muted")
+        self._edit_button.setIcon(icons.icon("pencil", tone))
+        self._delete_button.setIcon(icons.icon("trash", tone))
+        self._copy_button.setIcon(icons.icon("copy", tone))
+        self._set_thumb()
         for index in range(self.body_layout.count()):
             item = self.body_layout.itemAt(index)
             widget = item.widget() if item is not None else None
@@ -1379,9 +1995,44 @@ class PairSection(QWidget):
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
-        self.body.setVisible(self._expanded)
         self._chevron.setText("▾" if self._expanded else "▸")
+        self._animation.stop()
+        if self._expanded:
+            self.body.setMaximumHeight(0)
+            self.body.setVisible(True)
+            self.body.updateGeometry()
+            target = self.body.sizeHint().height()
+            self._animation.setStartValue(0)
+            self._animation.setEndValue(max(0, target))
+            self._animation.start()
+        else:
+            self.body.setVisible(False)
+            self.body.setMaximumHeight(0)
+            layout = self.layout()
+            if layout is not None:
+                layout.invalidate()
+            self.updateGeometry()
+            QTimer.singleShot(0, self._sync_collapsed_layout)
         self.toggled.emit(self._expanded)
+
+    def _sync_collapsed_layout(self) -> None:
+        if self._expanded:
+            return
+        layout = self.layout()
+        if layout is not None:
+            layout.invalidate()
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent_layout = parent.layout()
+            if parent_layout is not None:
+                parent_layout.invalidate()
+            parent.updateGeometry()
+
+    def _on_expand_finished(self) -> None:
+        if self._expanded:
+            self.body.setMaximumHeight(16777215)
+
 
 
 def _sales_word(count: int) -> str:
@@ -1405,7 +2056,7 @@ class TitleBar(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(54)
+        self.setFixedHeight(58)
         self._drag_offset: QPoint | None = None
         self._is_maximized = False
 
@@ -1422,6 +2073,59 @@ class TitleBar(QWidget):
         title.setObjectName("AppTitle")
         title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(title)
+        layout.addStretch(1)
+
+        # centre: live journal metrics -----------------------------------------
+        self._stats = QFrame()
+        self._stats.setObjectName("TopStats")
+        self._stats.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        stats_box = QHBoxLayout(self._stats)
+        stats_box.setContentsMargins(14, 5, 14, 5)
+        stats_box.setSpacing(16)
+
+        self._stat_total = QLabel("$ 0")
+        self._stat_total.setObjectName("TopStatValue")
+        self._stat_total.setProperty("state", "")
+        closed_value = QLabel("0")
+        closed_value.setObjectName("TopStatValue")
+        active_value = QLabel("0")
+        active_value.setObjectName("TopStatValue")
+        self._stat_closed = closed_value
+        self._stat_active = active_value
+
+        def add_metric(value: QLabel, caption: str) -> None:
+            box = QVBoxLayout()
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(0)
+            value.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+            )
+            box.addWidget(value)
+            label = QLabel(caption)
+            label.setObjectName("TopStatLabel")
+            label.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+            )
+            box.addWidget(label)
+            stats_box.addLayout(box)
+
+        def add_divider() -> None:
+            divider = QFrame()
+            divider.setObjectName("TopDivider")
+            divider.setFixedSize(1, 26)
+            divider.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+            )
+            stats_box.addWidget(divider, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        add_metric(self._stat_total, "Общая прибыль")
+        add_divider()
+        add_metric(closed_value, "Закрыто")
+        add_divider()
+        add_metric(active_value, "Активно")
+        layout.addWidget(self._stats, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addStretch(1)
 
         self.settings_button = QToolButton()
@@ -1463,6 +2167,27 @@ class TitleBar(QWidget):
         self._close.setToolTip("Закрыть")
         self._close.clicked.connect(self.closeRequested.emit)
         layout.addWidget(self._close, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def set_stats(
+        self,
+        total: float,
+        closed: int,
+        active: int,
+        currency: str = "$",
+    ) -> None:
+        """Show journal-wide figures in the centre of the title bar."""
+        self._stat_total.setText(format_money(total, currency))
+        state = (
+            "negative"
+            if total < -0.0001
+            else "positive"
+            if total > 0.0001
+            else ""
+        )
+        self._stat_total.setProperty("state", state)
+        repolish(self._stat_total)
+        self._stat_closed.setText(str(max(0, closed)))
+        self._stat_active.setText(str(max(0, active)))
 
     def refresh_icons(self) -> None:
         tone = theme.icon_tone("strong")
@@ -1583,7 +2308,7 @@ class Toast(QLabel):
         self.show()
         self.raise_()
         self._animation.stop()
-        self._animation.setDuration(160)
+        self._animation.setDuration(200)
         self._animation.setStartValue(0.0)
         self._animation.setEndValue(1.0)
         self._animation.start()
@@ -1602,7 +2327,7 @@ class Toast(QLabel):
 
     def _fade_out(self) -> None:
         self._animation.stop()
-        self._animation.setDuration(380)
+        self._animation.setDuration(220)
         self._animation.setStartValue(self._effect.opacity())
         self._animation.setEndValue(0.0)
         self._animation.start()

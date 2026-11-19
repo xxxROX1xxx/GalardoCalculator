@@ -10,6 +10,7 @@ from PySide6.QtGui import (
     QFont,
     QIcon,
     QImage,
+    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -165,13 +166,116 @@ def _draw_gear(p: QPainter) -> None:
             outline.lineTo(point)
     outline.closeSubpath()
 
-    hole = QPainterPath()
-    hole.addEllipse(QRectF(9.2, 9.2, 5.6, 5.6))
+    p.drawPath(outline)
+    p.drawEllipse(QRectF(9.2, 9.2, 5.6, 5.6))
 
-    p.save()
-    p.setBrush(p.pen().color())
-    p.drawPath(outline.subtracted(hole))
-    p.restore()
+
+def _lines(p: QPainter, *points: tuple[float, float]) -> None:
+    path = QPainterPath(QPointF(*points[0]))
+    for point in points[1:]:
+        path.lineTo(QPointF(*point))
+    p.drawPath(path)
+
+
+def _draw_clock(p: QPainter) -> None:
+    p.drawEllipse(QRectF(3, 3, 18, 18))
+    _lines(p, (12, 6.5), (12, 12), (15.6, 14.5))
+
+
+def _draw_car(p: QPainter) -> None:
+    p.drawRoundedRect(QRectF(3, 10, 18, 7.5), 2, 2)
+    _lines(p, (5, 10), (7, 5.6), (17, 5.6), (19, 10))
+    p.drawLine(5, 17.5, 5, 20)
+    p.drawLine(19, 17.5, 19, 20)
+    p.drawLine(6.5, 13.6, 8.3, 13.6)
+    p.drawLine(15.7, 13.6, 17.5, 13.6)
+
+
+def _draw_hanger(p: QPainter) -> None:
+    path = QPainterPath(QPointF(9.5, 7.2))
+    path.cubicTo(9.5, 3.5, 15.1, 3.9, 14.8, 7.1)
+    path.cubicTo(14.5, 8.6, 12, 9, 12, 11)
+    p.drawPath(path)
+    _lines(p, (12, 11), (21, 17), (21, 19), (3, 19), (3, 17), (12, 11))
+
+
+def _draw_box(p: QPainter) -> None:
+    _lines(p, (12, 3), (20.5, 7.8), (20.5, 16.1), (12, 21), (3.5, 16.1), (3.5, 7.8), (12, 3))
+    _lines(p, (3.5, 7.8), (12, 12.7), (20.5, 7.8))
+    p.drawLine(12, 12.7, 12, 21)
+
+
+def _draw_bars(p: QPainter) -> None:
+    for left, top in ((3.5, 13), (10, 8.5), (16.5, 4)):
+        p.drawRoundedRect(QRectF(left, top, 4, 20 - top), 0.7, 0.7)
+
+
+def _draw_wallet(p: QPainter) -> None:
+    p.drawRoundedRect(QRectF(3.5, 7.3, 17, 12.8), 2, 2)
+    _lines(p, (5, 7.3), (6.5, 4.5), (17, 4.5), (18.6, 7.3))
+    p.drawRoundedRect(QRectF(15, 11.5, 5.5, 4.5), 1, 1)
+
+
+def _draw_tag(p: QPainter) -> None:
+    _lines(p, (3.5, 4.5), (11, 4.5), (21, 14.4), (14.3, 21), (3.5, 10.6), (3.5, 4.5))
+    p.drawEllipse(QRectF(6.7, 7.4, 2, 2))
+
+
+def _draw_exchange(p: QPainter) -> None:
+    p.drawLine(3, 8, 20, 8)
+    _lines(p, (16, 4), (20, 8), (16, 12))
+    p.drawLine(21, 16, 4, 16)
+    _lines(p, (8, 12), (4, 16), (8, 20))
+
+
+def _draw_coins(p: QPainter) -> None:
+    for top in (4, 10, 16):
+        p.drawRoundedRect(QRectF(4.5, top, 15, 4), 2, 2)
+
+
+def _draw_currency(p: QPainter) -> None:
+    stroke = QPainterPath(QPointF(17.5, 6.7))
+    stroke.cubicTo(14, 3.2, 5.7, 4.4, 6.5, 8.8)
+    stroke.cubicTo(7.2, 12.1, 16.6, 11.1, 17.5, 15.2)
+    stroke.cubicTo(18.6, 19.9, 9.7, 21.3, 5.7, 17.4)
+    p.drawPath(stroke)
+    p.drawLine(12, 2.7, 12, 21.3)
+
+
+def _draw_grid(p: QPainter) -> None:
+    for x, y in ((4, 4), (13, 4), (4, 13), (13, 13)):
+        p.drawRoundedRect(QRectF(x, y, 6, 6), 1, 1)
+
+
+def _draw_comment(p: QPainter) -> None:
+    path = QPainterPath(QPointF(4, 4.5))
+    path.lineTo(20, 4.5)
+    path.quadTo(21.5, 4.5, 21.5, 6)
+    path.lineTo(21.5, 15)
+    path.quadTo(21.5, 16.5, 20, 16.5)
+    path.lineTo(10, 16.5)
+    path.lineTo(5.5, 20.5)
+    path.lineTo(5.5, 16.5)
+    path.quadTo(2.5, 16.5, 2.5, 15)
+    path.lineTo(2.5, 6)
+    path.quadTo(2.5, 4.5, 4, 4.5)
+    p.drawPath(path)
+
+
+def _draw_bolt(p: QPainter) -> None:
+    _lines(p, (13.5, 2), (5.5, 13), (11.4, 13), (10.5, 22), (19, 10), (13, 10), (13.5, 2))
+
+
+def _draw_filters(p: QPainter) -> None:
+    for center, y in ((14.5, 6), (9, 12), (16, 18)):
+        p.drawLine(3, y, center - 2, y)
+        p.drawLine(center + 2, y, 21, y)
+        p.drawEllipse(QRectF(center - 2, y - 2, 4, 4))
+
+
+def _draw_bag(p: QPainter) -> None:
+    p.drawRoundedRect(QRectF(4.5, 8, 15, 13), 2, 2)
+    p.drawArc(QRectF(8, 3, 8, 10), 0, 180 * 16)
 
 
 _DRAWERS = {
@@ -192,6 +296,21 @@ _DRAWERS = {
     "gear": _draw_gear,
     "maximize": _draw_maximize,
     "restore": _draw_restore,
+    "clock": _draw_clock,
+    "car": _draw_car,
+    "hanger": _draw_hanger,
+    "box": _draw_box,
+    "bars": _draw_bars,
+    "wallet": _draw_wallet,
+    "tag": _draw_tag,
+    "exchange": _draw_exchange,
+    "coins": _draw_coins,
+    "currency": _draw_currency,
+    "grid": _draw_grid,
+    "comment": _draw_comment,
+    "bolt": _draw_bolt,
+    "filters": _draw_filters,
+    "bag": _draw_bag,
 }
 
 
@@ -226,15 +345,23 @@ def logo_image(size: int) -> QImage:
 
     rect = QRectF(0.6, 0.6, size - 1.2, size - 1.2)
     radius = size * 0.26
-    p.setBrush(QColor("#0A0C0F"))
-    p.setPen(QPen(QColor(255, 255, 255, 38), max(1.0, size * 0.012)))
+    background = QLinearGradient(0, 0, size, size)
+    background.setColorAt(0, QColor("#3E1C5C"))
+    background.setColorAt(0.52, QColor("#160B27"))
+    background.setColorAt(1, QColor("#0E0719"))
+    p.setBrush(background)
+    p.setPen(QPen(QColor("#563573"), max(1.0, size * 0.012)))
     p.drawRoundedRect(rect, radius, radius)
 
     font = QFont("Segoe UI")
-    font.setPixelSize(max(7, int(size * 0.56)))
-    font.setWeight(QFont.Weight.Bold)
+    font.setPixelSize(max(7, int(size * 0.77)))
+    font.setWeight(QFont.Weight.Black)
+    font.setItalic(True)
     p.setFont(font)
-    p.setPen(QColor("#F5F6F8"))
+    lettering = QLinearGradient(0, 0, 0, size)
+    lettering.setColorAt(0.2, QColor("#FFF6FF"))
+    lettering.setColorAt(0.79, QColor("#BC76F4"))
+    p.setPen(QPen(lettering, 1))
     p.drawText(img.rect(), Qt.AlignmentFlag.AlignCenter, "G")
     p.end()
     return img

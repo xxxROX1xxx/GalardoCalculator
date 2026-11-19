@@ -66,7 +66,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import design, icons, theme, ui_kit
+from . import __version__, design, icons, theme, ui_kit
 from .db import CATEGORIES, Deal
 
 # --------------------------------------------------------------------------- helpers
@@ -971,6 +971,7 @@ class SettingsPopup(PopupBase):
     accentChanged = Signal(str)
     themeChanged = Signal(str)
     liquidGlassChanged = Signal(bool)
+    updateRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1060,6 +1061,21 @@ class SettingsPopup(PopupBase):
         preview_row.addWidget(self._accent_value)
         self.body.addWidget(preview)
 
+        self._update_status = QLabel(f"Версия {__version__}")
+        self._update_status.setObjectName("PopupHint")
+        self._update_status.setWordWrap(True)
+        self.body.addWidget(self._update_status)
+
+        self._update_button = QPushButton("Обновить приложение")
+        self._update_button.setObjectName("PopupGhost")
+        self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_button.clicked.connect(self.updateRequested.emit)
+        self.body.addWidget(self._update_button)
+
+    def set_update_status(self, message: str, busy: bool) -> None:
+        self._update_status.setText(message)
+        self._update_button.setEnabled(not busy)
+
     def open_for(
         self,
         anchor: QWidget,
@@ -1142,17 +1158,33 @@ class PhotoDrop(QFrame):
         self._image: QImage | None = None
         self._file_name = ""
 
-        self._empty_pixmap = icons.icon_pixmap(
-            "photo", theme.icon_tone("text"), 96
-        ).scaled(
-            48,
-            48,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._empty_pixmap.setDevicePixelRatio(2.0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._views = QStackedWidget()
+        outer.addWidget(self._views)
 
-        layout = QHBoxLayout(self)
+        empty = QWidget()
+        empty.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        empty_layout = QVBoxLayout(empty)
+        empty_layout.setContentsMargins(10, 8, 10, 8)
+        empty_layout.setSpacing(4)
+        empty_layout.addStretch(1)
+        self._empty_icon = QLabel()
+        empty_layout.addWidget(self._empty_icon, 0, Qt.AlignmentFlag.AlignHCenter)
+        empty_title = QLabel("Добавить фотографию")
+        empty_title.setObjectName("PhotoTitle")
+        empty_layout.addWidget(empty_title, 0, Qt.AlignmentFlag.AlignHCenter)
+        empty_hint = QLabel("Перетащите изображение или нажмите для выбора")
+        empty_hint.setObjectName("PhotoHint")
+        empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_hint.setWordWrap(True)
+        empty_layout.addWidget(empty_hint)
+        empty_layout.addStretch(1)
+        self._views.addWidget(empty)
+
+        filled = QWidget()
+        self._views.addWidget(filled)
+        layout = QHBoxLayout(filled)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(14)
 
@@ -1160,16 +1192,15 @@ class PhotoDrop(QFrame):
         self._preview.setObjectName("PhotoIcon")
         self._preview.setFixedSize(72, 72)
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setPixmap(self._empty_pixmap)
         layout.addWidget(self._preview)
 
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(3)
-        self._title = QLabel("Добавить фотографию")
+        self._title = QLabel("Фотография добавлена")
         self._title.setObjectName("PhotoTitle")
         self._title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._hint = QLabel("Перетащите изображение или нажмите для выбора")
+        self._hint = QLabel()
         self._hint.setObjectName("PhotoHint")
         self._hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._hint.setWordWrap(True)
@@ -1204,6 +1235,7 @@ class PhotoDrop(QFrame):
         actions.addWidget(self._clear)
 
         layout.addLayout(actions)
+        self.refresh_icons()
 
     # ------------------------------------------------------------------ public
     def photo_bytes(self) -> bytes | None:
@@ -1261,31 +1293,22 @@ class PhotoDrop(QFrame):
         self._file_name = ""
         self.setProperty("filled", False)
         repolish(self)
-        self._preview.setPixmap(self._empty_pixmap)
-        self._title.setText("Добавить фотографию")
-        self._hint.setText("Перетащите изображение или нажмите для выбора")
+        self._views.setCurrentIndex(0)
+        self._preview.clear()
+        self._hint.clear()
         self._hint.setToolTip("")
         self._replace.hide()
         self._clear.hide()
 
-    def refresh_icons(self) -> None:
-        self._empty_pixmap = icons.icon_pixmap(
-            "photo", theme.icon_tone("text"), 96
-        ).scaled(
-            48,
-            48,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._empty_pixmap.setDevicePixelRatio(2.0)
+    def refresh_icons(self, accent: str = theme.DEFAULT_ACCENT) -> None:
+        accent_color = theme.theme_accent(accent, theme.active_theme()).name()
+        self._empty_icon.setPixmap(icons.icon("photo", accent_color).pixmap(32, 32))
         self._replace.setIcon(icons.icon("pencil", theme.icon_tone("muted")))
         self._clear.setIcon(icons.icon("trash", theme.icon_tone("muted")))
         if self.has_photo() and self._image is not None:
             self._preview.setPixmap(
                 rounded_image_pixmap(self._image, 72, 72, 12.0)
             )
-        else:
-            self._preview.setPixmap(self._empty_pixmap)
 
     # ------------------------------------------------------------------ events
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -1345,10 +1368,10 @@ class PhotoDrop(QFrame):
             return
         self.setProperty("filled", True)
         repolish(self)
+        self._views.setCurrentIndex(1)
         self._preview.setPixmap(
             rounded_image_pixmap(self._image, 72, 72, 12.0)
         )
-        self._title.setText("Фотография добавлена")
         hint = self._file_name or "Нажмите на область, чтобы заменить"
         self._hint.setText(hint)
         self._hint.setToolTip(safe_tooltip(self._file_name) if self._file_name else "")
@@ -2142,42 +2165,60 @@ def _sales_word(count: int) -> str:
 
 
 # ------------------------------------------------------------------------- title bar
-class TitleBar(QWidget):
+class TitleBar(QFrame):
     minimizeRequested = Signal()
     maximizeRequested = Signal()
     closeRequested = Signal()
     settingsRequested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, accent: str = theme.DEFAULT_ACCENT) -> None:
         super().__init__(parent)
-        self.setFixedHeight(58)
+        self.setObjectName("WindowHeader")
+        self.setFixedHeight(68)
         self._drag_offset: QPoint | None = None
         self._is_maximized = False
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(18, 0, 10, 0)
+        layout.setContentsMargins(22, 0, 13, 0)
         layout.setSpacing(10)
 
-        logo = QLabel()
-        logo.setPixmap(icons.logo_pixmap(26))
-        logo.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        layout.addWidget(logo)
+        self._logo = QLabel()
+        self._logo.setPixmap(icons.logo_pixmap(39))
+        self._logo.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(self._logo)
 
         title = QLabel("Galardo")
         title.setObjectName("AppTitle")
         title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(title)
+
+        local = QFrame()
+        local.setObjectName("LocalDatabase")
+        local.setFixedHeight(30)
+        local.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        local_layout = QHBoxLayout(local)
+        local_layout.setContentsMargins(10, 5, 10, 5)
+        local_layout.setSpacing(7)
+        dot = QLabel()
+        dot.setObjectName("LocalDatabaseDot")
+        dot.setFixedSize(8, 8)
+        local_layout.addWidget(dot)
+        local_label = QLabel("Локальная база")
+        local_label.setObjectName("LocalDatabaseLabel")
+        local_layout.addWidget(local_label)
+        layout.addWidget(local, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addStretch(1)
 
         # centre: live journal metrics -----------------------------------------
-        self._stats = QFrame()
-        self._stats.setObjectName("TopStats")
+        self._stats = QWidget()
         self._stats.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
         )
         stats_box = QHBoxLayout(self._stats)
-        stats_box.setContentsMargins(14, 5, 14, 5)
-        stats_box.setSpacing(16)
+        stats_box.setContentsMargins(0, 0, 0, 0)
+        stats_box.setSpacing(10)
+        self._metric_icons: dict[str, QLabel] = {}
+        self._metric_frames: list[QFrame] = []
 
         self._stat_total = QLabel("$ 0")
         self._stat_total.setObjectName("TopStatValue")
@@ -2189,43 +2230,38 @@ class TitleBar(QWidget):
         self._stat_closed = closed_value
         self._stat_active = active_value
 
-        def add_metric(value: QLabel, caption: str) -> None:
+        def add_metric(value: QLabel, caption: str, symbol: str) -> None:
+            metric = QFrame()
+            metric.setObjectName("TopStats")
+            metric.setMinimumWidth(116)
+            self._metric_frames.append(metric)
+            row = QHBoxLayout(metric)
+            row.setContentsMargins(12, 5, 15, 5)
+            row.setSpacing(10)
+            icon = QLabel()
+            icon.setFixedSize(25, 25)
+            self._metric_icons[symbol] = icon
+            row.addWidget(icon)
             box = QVBoxLayout()
             box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(0)
-            value.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-            )
-            box.addWidget(value)
+            box.setSpacing(2)
             label = QLabel(caption)
             label.setObjectName("TopStatLabel")
-            label.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-            )
             box.addWidget(label)
-            stats_box.addLayout(box)
+            box.addWidget(value)
+            row.addLayout(box)
+            stats_box.addWidget(metric)
 
-        def add_divider() -> None:
-            divider = QFrame()
-            divider.setObjectName("TopDivider")
-            divider.setFixedSize(1, 26)
-            divider.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-            )
-            stats_box.addWidget(divider, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        add_metric(self._stat_total, "Общая прибыль")
-        add_divider()
-        add_metric(closed_value, "Закрыто")
-        add_divider()
-        add_metric(active_value, "Активно")
+        add_metric(self._stat_total, "Общая прибыль", "bars")
+        add_metric(closed_value, "Закрыто", "box")
+        add_metric(active_value, "Активно", "wallet")
         layout.addWidget(self._stats, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addStretch(1)
 
         self.settings_button = QToolButton()
         self.settings_button.setObjectName("WinBtn")
         self.settings_button.setIcon(icons.icon("gear", theme.icon_tone("strong")))
-        self.settings_button.setIconSize(QSize(15, 15))
+        self.settings_button.setIconSize(QSize(19, 19))
         self.settings_button.setFixedSize(32, 28)
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.setToolTip("Оформление")
@@ -2263,6 +2299,15 @@ class TitleBar(QWidget):
         self._close.setToolTip("Закрыть")
         self._close.clicked.connect(self.closeRequested.emit)
         layout.addWidget(self._close, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.refresh_icons(accent)
+
+    def set_metric_size(self, room: float) -> None:
+        logo_size = 39 + round(room * 9)
+        if self._logo.pixmap().deviceIndependentSize().width() != logo_size:
+            self._logo.setPixmap(icons.logo_pixmap(logo_size))
+        for metric in self._metric_frames:
+            metric.setMinimumWidth(116 + round(room * 58))
+            metric.setMinimumHeight(44 + round(room * 22))
 
     def set_stats(
         self,
@@ -2285,8 +2330,11 @@ class TitleBar(QWidget):
         self._stat_closed.setText(str(max(0, closed)))
         self._stat_active.setText(str(max(0, active)))
 
-    def refresh_icons(self) -> None:
+    def refresh_icons(self, accent: str = theme.DEFAULT_ACCENT) -> None:
         tone = theme.icon_tone("strong")
+        accent_color = theme.theme_accent(accent, theme.active_theme()).name()
+        for name, label in self._metric_icons.items():
+            label.setPixmap(icons.icon(name, accent_color).pixmap(label.size()))
         self.settings_button.setIcon(icons.icon("gear", tone))
         self._minimize.setIcon(icons.icon("minus", tone))
         self._maximize.setIcon(

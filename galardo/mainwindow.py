@@ -12,12 +12,13 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     QTimer,
+    QUrl,
     Qt,
 )
 from PySide6.QtGui import (
     QColor,
+    QDesktopServices,
     QGuiApplication,
-    QIcon,
     QImage,
     QKeySequence,
     QLinearGradient,
@@ -34,11 +35,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QStackedWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +49,7 @@ from PySide6.QtWidgets import (
 from . import design, icons, theme, ui_kit
 from .db import CATEGORIES, Database, Deal
 from .market import KIND_CATEGORY, MarketPanel
+from .updater import AppUpdater, Release, UPDATE_FAILED_ARG
 from .widgets import (
     AmountLineEdit,
     ClickableLineEdit,
@@ -66,6 +70,14 @@ from .widgets import (
     install_press_feedback,
     parse_amount,
     repolish,
+)
+
+HISTORY_TABS = (
+    ("all", "История", "clock"),
+    ("transport", "Транспорт", "car"),
+    ("clothing", "Одежда", "hanger"),
+    ("items", "Предметы", "box"),
+    ("market", "Маркет", "bars"),
 )
 
 
@@ -148,9 +160,18 @@ class MainWindow(QWidget):
         self._settings_popup.themeChanged.connect(self._on_theme_changed)
         self._settings_popup.liquidGlassChanged.connect(self._set_liquid_glass)
         self._settings_popup.refresh_shadow(self.theme_name, self.accent)
+        self._updater = AppUpdater(self)
+        self._settings_popup.updateRequested.connect(self._updater.check)
+        self._updater.statusChanged.connect(self._settings_popup.set_update_status)
+        self._updater.available.connect(self._on_update_available)
+        self._updater.downloaded.connect(self._on_update_downloaded)
 
         self._overlay = ImageOverlay(self)
         self._toast = Toast(self)
+        if UPDATE_FAILED_ARG in QApplication.arguments():
+            message = "Не удалось установить обновление"
+            self._settings_popup.set_update_status(message, False)
+            QTimer.singleShot(0, lambda: self._toast.show_message(message))
         self.photo.photoAdded.connect(
             lambda: self._toast.show_message("Фотография добавлена")
         )
@@ -182,6 +203,8 @@ class MainWindow(QWidget):
 
     def _submit_tint(self) -> str:
         """Цвет значка на акцентной кнопке — контрастный к её фону."""
+        if self.theme_name == "dark":
+            return "#FFFFFF"
         accent = theme.theme_accent(self.accent, self.theme_name)
         return theme.contrast_text(accent).name()
 
@@ -221,8 +244,23 @@ class MainWindow(QWidget):
         if not hasattr(self, "title_bar"):
             return
         tone = theme.icon_tone("muted")
-        self.title_bar.refresh_icons()
-        self.photo.refresh_icons()
+        self.title_bar.refresh_icons(self.accent)
+        self.photo.refresh_icons(self.accent)
+        accent = theme.theme_accent(self.accent, self.theme_name).name()
+        self.submit_button.set_ribbon_accent(self.accent)
+        self.total_bar.set_ribbon_accent(self.accent)
+        for label, name, size in self._accent_symbols:
+            label.setPixmap(icons.icon(name, accent).pixmap(size, size))
+        for key, _, name in HISTORY_TABS:
+            self._tab_buttons[key].setIcon(icons.icon(name, tone))
+        self._history_filter.setIcon(icons.icon("filters", accent))
+        colors = design.tokens(self.theme_name, liquid_glass=self.liquid_glass)
+        self.side_combo.setItemIcon(0, icons.icon("bag", colors.profit))
+        self.side_combo.setItemIcon(1, icons.icon("bag", colors.loss))
+        for index, name in enumerate(("car", "hanger", "box")):
+            self.category_combo.setItemIcon(index, icons.icon(name, accent))
+        self._amount_icon.setIcon(icons.icon("coins", tone))
+        self._date_icon.setIcon(icons.icon("calendar", tone))
         if hasattr(self, "_refresh_action"):
             self._refresh_action.setIcon(icons.icon("refresh", tone))
         if hasattr(self, "_search_action"):
@@ -232,7 +270,7 @@ class MainWindow(QWidget):
             if self._editing_id is not None:
                 self.submit_button.setIcon(icons.icon("check", self._submit_tint()))
             else:
-                self.submit_button.setIcon(QIcon())
+                self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
         if hasattr(self, "market"):
             self.market.refresh_theme(self.accent)
         for index in range(self.history_layout.count()):
@@ -268,6 +306,7 @@ class MainWindow(QWidget):
 
     def _build_ui(self) -> None:
         self._panel_surfaces: list[QFrame] = []
+        self._accent_symbols: list[tuple[QLabel, str, int]] = []
         self._shadow_color = theme.shadow_color(
             self.theme_name, self.accent, strong=True
         )
@@ -275,7 +314,7 @@ class MainWindow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        self.title_bar = TitleBar(self)
+        self.title_bar = TitleBar(self, accent=self.accent)
         self.title_bar.minimizeRequested.connect(self.showMinimized)
         self.title_bar.maximizeRequested.connect(self._toggle_maximize)
         self.title_bar.closeRequested.connect(self.close)
@@ -298,6 +337,7 @@ class MainWindow(QWidget):
 
         self._grip = ResizeGrip(self)
         self._grip.raise_()
+        self._refresh_icons()
 
     def _register_panel_shadow(self, panel: QFrame) -> None:
         """Elevation is painted by the window itself.
@@ -359,17 +399,28 @@ class MainWindow(QWidget):
 
         # heading --------------------------------------------------------------
         heading = QWidget()
-        heading_box = QVBoxLayout(heading)
+        heading_box = QHBoxLayout(heading)
         heading_box.setContentsMargins(0, 0, 0, 0)
-        heading_box.setSpacing(3)
+        heading_box.setSpacing(10)
+        emblem = self._accent_symbol("plus", 23)
+        emblem.setObjectName("PanelEmblem")
+        emblem.setFixedSize(36, 36)
+        heading_box.addWidget(emblem)
         title = QLabel("Новая сделка")
         title.setObjectName("PanelTitle")
         heading_box.addWidget(title)
-        subtitle = QLabel("Заполните поля — сделка сразу попадёт в историю")
-        subtitle.setObjectName("PanelSubtitle")
-        heading_box.addWidget(subtitle)
+        heading_box.addStretch(1)
+        heading_box.addWidget(self._accent_symbol("bolt", 20))
+        shortcut = QLabel("Ctrl + Enter\nдля сохранения")
+        shortcut.setObjectName("ShortcutHint")
+        heading_box.addWidget(shortcut)
         layout.addWidget(heading)
-        layout.addSpacing(14)
+        layout.addSpacing(12)
+        heading_rule = QFrame()
+        heading_rule.setObjectName("Divider")
+        heading_rule.setFixedHeight(1)
+        layout.addWidget(heading_rule)
+        layout.addSpacing(12)
 
         # scrollable fields ----------------------------------------------------
         self.form_scroll = QScrollArea()
@@ -386,23 +437,20 @@ class MainWindow(QWidget):
             Qt.WidgetAttribute.WA_StyledBackground, True
         )
         form = QVBoxLayout(self.form_content)
+        self._form_fields_layout = form
         form.setContentsMargins(0, 0, 5, 0)
         form.setSpacing(12)
 
         # product --------------------------------------------------------------
         self.product_edit = QLineEdit()
         self.product_edit.setFixedHeight(44)
-        self.product_edit.setPlaceholderText("Например: Truffade Vivo")
+        self.product_edit.setPlaceholderText("Например: BMW M5")
         self.product_edit.setClearButtonEnabled(True)
         self.product_edit.returnPressed.connect(self._on_submit)
         self.product_edit.textChanged.connect(
             lambda: self._clear_field_error(self.product_edit)
         )
-        self.product_edit.addAction(
-            icons.icon("receipt", theme.icon_tone("muted")),
-            QLineEdit.ActionPosition.LeadingPosition,
-        )
-        form.addWidget(self._group("Название товара", self.product_edit))
+        form.addWidget(self._group("Название товара", self.product_edit, "tag"))
 
         # side + amount --------------------------------------------------------
         self.side_combo = QComboBox()
@@ -418,16 +466,16 @@ class MainWindow(QWidget):
         self.amount_edit.textChanged.connect(
             lambda: self._clear_field_error(self.amount_edit)
         )
-        self.amount_edit.addAction(
-            icons.icon("chart", theme.icon_tone("muted")),
-            QLineEdit.ActionPosition.LeadingPosition,
+        self._amount_icon = self.amount_edit.addAction(
+            icons.icon("coins", theme.icon_tone("muted")),
+            QLineEdit.ActionPosition.TrailingPosition,
         )
 
         deal_row = QHBoxLayout()
         deal_row.setContentsMargins(0, 0, 0, 0)
         deal_row.setSpacing(12)
-        deal_row.addWidget(self._group("Что сделал", self.side_combo), 5)
-        deal_row.addWidget(self._group("Сумма сделки", self.amount_edit), 6)
+        deal_row.addWidget(self._group("Операция", self.side_combo, "exchange"), 1)
+        deal_row.addWidget(self._group("Сумма ($)", self.amount_edit, "currency"), 1)
         form.addLayout(deal_row)
 
         # category + deal date ------------------------------------------------
@@ -439,12 +487,13 @@ class MainWindow(QWidget):
         self.category_combo.setToolTip("Категория сделки")
 
         self.deal_dt_edit = ClickableLineEdit()
+        self.deal_dt_edit.setObjectName("DealDate")
         self.deal_dt_edit.setReadOnly(True)
         self.deal_dt_edit.setFixedHeight(44)
         self.deal_dt_edit.setCursor(Qt.CursorShape.PointingHandCursor)
         self.deal_dt_edit.setToolTip("Изменить дату и время")
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
-        self.deal_dt_edit.addAction(
+        self._date_icon = self.deal_dt_edit.addAction(
             icons.icon("calendar", theme.icon_tone("muted")),
             QLineEdit.ActionPosition.LeadingPosition,
         )
@@ -459,8 +508,8 @@ class MainWindow(QWidget):
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(12)
-        meta_row.addWidget(self._group("Категория", self.category_combo), 5)
-        meta_row.addWidget(self._group("Дата сделки", self.deal_dt_edit), 6)
+        meta_row.addWidget(self._group("Категория", self.category_combo, "grid"), 5)
+        meta_row.addWidget(self._group("Дата и время", self.deal_dt_edit, "calendar"), 6)
         form.addLayout(meta_row)
 
         # comment --------------------------------------------------------------
@@ -468,11 +517,11 @@ class MainWindow(QWidget):
         self.comment_edit.setFixedHeight(84)
         self.comment_edit.setPlaceholderText("Текст комментария...")
         self.comment_edit.setTabChangesFocus(True)
-        form.addWidget(self._group("Комментарий", self.comment_edit))
+        form.addWidget(self._group("Комментарий", self.comment_edit, "comment"))
 
         # photo ----------------------------------------------------------------
         self.photo = PhotoDrop()
-        form.addWidget(self._group("Фотография", self.photo))
+        form.addWidget(self._group("Фото сделки", self.photo, "photo"))
 
         form.addStretch(1)
         self.form_scroll.setWidget(self.form_content)
@@ -489,7 +538,7 @@ class MainWindow(QWidget):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.submit_button = QPushButton("+ Внести сделку")
+        self.submit_button = ui_kit.RibbonButton("Внести сделку")
         self.submit_button.setObjectName("Submit")
         self.submit_button.setFixedHeight(46)
         self.submit_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -516,21 +565,19 @@ class MainWindow(QWidget):
         layout.setContentsMargins(20, 18, 20, 20)
         layout.setSpacing(12)
 
-        header = QHBoxLayout()
-        header.setSpacing(4)
+        tab_strip = QFrame()
+        tab_strip.setObjectName("HistoryTabs")
+        header = QHBoxLayout(tab_strip)
+        header.setContentsMargins(6, 4, 8, 4)
+        header.setSpacing(2)
         self._tab_buttons: dict[str, QPushButton] = {}
-        for key, label in (
-            ("all", "История"),
-            ("transport", "Транспорт"),
-            ("clothing", "Одежда"),
-            ("items", "Предметы"),
-            ("market", "Маркет"),
-        ):
+        for key, label, _ in HISTORY_TABS:
             button = QPushButton(label)
             button.setObjectName("Tab")
             button.setCheckable(True)
             button.setAutoExclusive(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setIconSize(QSize(17, 17))
             button.clicked.connect(
                 lambda _checked=False, k=key: self._select_tab(k)
             )
@@ -541,7 +588,7 @@ class MainWindow(QWidget):
         self.count_label = QLabel("0 сделок")
         self.count_label.setObjectName("CountMuted")
         header.addWidget(self.count_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        layout.addLayout(header)
+        layout.addWidget(tab_strip)
 
         self.view_stack = QStackedWidget()
         self.history_page = QWidget()
@@ -551,7 +598,7 @@ class MainWindow(QWidget):
 
         self.search_edit = QLineEdit()
         self.search_edit.setFixedHeight(44)
-        self.search_edit.setPlaceholderText("Поиск по сделкам")
+        self.search_edit.setPlaceholderText("Поиск среди сделок…")
         self._search_action = self.search_edit.addAction(
             icons.icon("search", theme.icon_tone("muted")),
             QLineEdit.ActionPosition.LeadingPosition,
@@ -564,7 +611,25 @@ class MainWindow(QWidget):
         self._clear_search_action.setVisible(False)
         self._clear_search_action.triggered.connect(self.search_edit.clear)
         self.search_edit.textChanged.connect(self._on_search_text)
-        page_layout.addWidget(self.search_edit)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        search_row.addWidget(self.search_edit, 1)
+        self._history_filter = QToolButton()
+        self._history_filter.setObjectName("HistoryFilter")
+        self._history_filter.setFixedSize(42, 44)
+        self._history_filter.setIconSize(QSize(20, 20))
+        self._history_filter.setToolTip("Фильтр по категории")
+        self._history_filter.setAccessibleName("Фильтр по категории")
+        self._history_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        filters = QMenu(self._history_filter)
+        filters.setObjectName("HistoryFilterMenu")
+        for key, label, _ in HISTORY_TABS[:-1]:
+            action = filters.addAction("Все сделки" if key == "all" else label)
+            action.triggered.connect(lambda _checked=False, k=key: self._select_tab(k))
+        self._history_filter.setMenu(filters)
+        self._history_filter.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        search_row.addWidget(self._history_filter)
+        page_layout.addLayout(search_row)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -585,12 +650,16 @@ class MainWindow(QWidget):
         self.scroll.setWidget(self.history_content)
         page_layout.addWidget(self.scroll, 1)
 
-        self.total_bar = QFrame()
+        self.total_bar = ui_kit.RibbonFrame()
         self.total_bar.setObjectName("TotalBar")
         self.total_bar.setFixedHeight(52)
         total_layout = QHBoxLayout(self.total_bar)
         total_layout.setContentsMargins(14, 0, 14, 0)
         total_layout.setSpacing(8)
+        total_icon = self._accent_symbol("bars", 22)
+        total_icon.setObjectName("TotalEmblem")
+        total_icon.setFixedSize(34, 34)
+        total_layout.addWidget(total_icon)
         self.total_caption = QLabel("Итого:")
         self.total_caption.setObjectName("TotalCaption")
         total_layout.addWidget(self.total_caption)
@@ -616,7 +685,14 @@ class MainWindow(QWidget):
 
         return panel
 
-    def _group(self, label_text: str, widget: QWidget) -> QWidget:
+    def _accent_symbol(self, name: str, size: int) -> QLabel:
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setFixedSize(size, size)
+        self._accent_symbols.append((label, name, size))
+        return label
+
+    def _group(self, label_text: str, widget: QWidget, symbol: str) -> QWidget:
         container = QWidget()
         container.setObjectName("FieldGroup")
         box = QVBoxLayout(container)
@@ -624,7 +700,13 @@ class MainWindow(QWidget):
         box.setSpacing(5)
         label = QLabel(label_text)
         label.setObjectName("FieldLabel")
-        box.addWidget(label)
+        label.setBuddy(widget)
+        row = QHBoxLayout()
+        row.setSpacing(7)
+        row.addWidget(self._accent_symbol(symbol, 17))
+        row.addWidget(label)
+        row.addStretch(1)
+        box.addLayout(row)
         box.addWidget(widget)
         return container
 
@@ -1033,8 +1115,8 @@ class MainWindow(QWidget):
         self.category_combo.setCurrentIndex(0)
         self._deal_dt = QDateTime.currentDateTime()
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
-        self.submit_button.setText("+ Внести сделку")
-        self.submit_button.setIcon(QIcon())
+        self.submit_button.setText("Внести сделку")
+        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
         self.cancel_button.hide()
         self.product_edit.setFocus()
 
@@ -1121,8 +1203,8 @@ class MainWindow(QWidget):
         self._deal_dt = QDateTime.currentDateTime()
         self.deal_dt_edit.setText(self._deal_dt.toString("dd.MM.yyyy HH:mm"))
         self._clear_errors()
-        self.submit_button.setText("+ Внести сделку")
-        self.submit_button.setIcon(QIcon())
+        self.submit_button.setText("Внести сделку")
+        self.submit_button.setIcon(icons.icon("plus", self._submit_tint()))
         self.cancel_button.show()
         self.amount_edit.setFocus()
         self.amount_edit.selectAll()
@@ -1298,6 +1380,37 @@ class MainWindow(QWidget):
         self.apply_appearance()
         return True
 
+    def _on_update_available(self, release: Release) -> None:
+        if self._updater.target is not None:
+            self._updater.download(release)
+        else:
+            opened = QDesktopServices.openUrl(QUrl(release.page))
+            message = (
+                f"Доступна версия {release.tag.removeprefix('v')}"
+                if opened else "Не удалось открыть страницу релиза"
+            )
+            self._settings_popup.set_update_status(message, False)
+
+    def _on_update_downloaded(self, release: Release) -> None:
+        self._settings_popup.hide()
+        box = QMessageBox(self)
+        box.setWindowTitle("Обновление Galardo")
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(f"Установить Galardo {release.tag.removeprefix('v')}?")
+        box.setInformativeText(
+            "Приложение перезапустится. Несохранённые изменения в форме будут потеряны."
+        )
+        install = box.addButton("Обновить и перезапустить", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        if box.clickedButton() is not install:
+            self._updater.discard("Установка отменена")
+        elif self._updater.install(release):
+            self.close()
+        else:
+            self._toast.show_message("Не удалось запустить установку обновления")
+
     # -------------------------------------------------------------------- events
     def _photo_paste_allowed(self) -> bool:
         """Ctrl+V puts an image from the clipboard into the photo field.
@@ -1356,6 +1469,28 @@ class MainWindow(QWidget):
         self._grip.move(self.width() - 20, self.height() - 20)
         self._grip.raise_()
         self._sync_window_state()
+        room = max(0.0, min(1.0, (self.height() - 760) / 242))
+        self.title_bar.setFixedHeight(68 + round(20 * room))
+        self.title_bar.set_metric_size(room)
+        self._form_fields_layout.setContentsMargins(0, round(18 * room), 5, 0)
+        self._form_fields_layout.setSpacing(12 + round(18 * room))
+        field_height = 44 + round(10 * room)
+        for field in (
+            self.product_edit, self.side_combo, self.amount_edit,
+            self.category_combo, self.deal_dt_edit, self.search_edit,
+        ):
+            field.setFixedHeight(field_height)
+        self._history_filter.setFixedHeight(field_height)
+        self.comment_edit.setFixedHeight(84 + round(20 * room))
+        self.photo.setFixedHeight(104 + round(17 * room))
+        self.submit_button.setFixedHeight(46 + round(13 * room))
+        self.cancel_button.setFixedHeight(self.submit_button.height())
+        self.total_bar.setFixedHeight(52 + round(17 * room))
+        self._date_icon.setVisible(self.width() >= 1140)
+        tab_icon_size = 15 if self.width() < 1140 else 18
+        for button in self._tab_buttons.values():
+            button.setMinimumHeight(33 + round(12 * room))
+            button.setIconSize(QSize(tab_icon_size, tab_icon_size))
         if hasattr(self, "_overlay") and self._overlay.isVisible():
             self._overlay.setGeometry(self.rect())
         if hasattr(self, "_toast") and self._toast.isVisible():
@@ -1422,6 +1557,17 @@ class MainWindow(QWidget):
         painter.fillPath(path, base)
         if self.liquid_glass:
             self._paint_glass_backdrop(painter, rect)
+        width, height = rect.width(), rect.height()
+        accent = QColor(self.accent)
+        strength = 0.42 if self.theme_name == "light" else 1.0
+        design.paint_accent_ribbon(
+            painter, QRectF(width * 0.42, -height * 0.045, width * 0.46, height * 0.21),
+            accent, strength,
+        )
+        design.paint_accent_ribbon(
+            painter, QRectF(-width * 0.057, height * 0.74, width * 0.32, height * 0.255),
+            accent, strength, flip=True,
+        )
 
         for panel in getattr(self, "_panel_surfaces", ()):
             self._paint_panel_shadow(painter, panel)
@@ -1432,5 +1578,6 @@ class MainWindow(QWidget):
             painter.drawPath(path)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._updater.cancel()
         self.db.close()
         super().closeEvent(event)

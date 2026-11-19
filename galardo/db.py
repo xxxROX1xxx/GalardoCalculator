@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import statistics
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,7 @@ from .legacy import LegacyDeal, legacy_history_path, load_legacy_deals
 from .paths import data_dir
 
 LEGACY_IMPORT_FLAG = "legacy_import_done"
+LEGACY_PAIRS_FLAG = "legacy_pairs_backfilled"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS deals (
@@ -141,6 +143,7 @@ class Database:
         # explicit path, so they never touch the user's real data.
         if path is None or legacy_source is not None:
             self._auto_import_legacy(legacy_source)
+        self._migrate_legacy_pairs()
 
     def _ensure_columns(self) -> None:
         """Add columns introduced in newer versions without losing history."""
@@ -185,9 +188,64 @@ class Database:
         self._conn.commit()
 
     # ---------------------------------------------------------- legacy import
-    def _deal_count(self) -> int:
-        row = self._conn.execute("SELECT COUNT(*) AS total FROM deals").fetchone()
-        return int(row["total"]) if row else 0
+    def _migrate_legacy_pairs(self) -> None:
+        if self.get_setting(LEGACY_PAIRS_FLAG, "0") == "1":
+            return
+        with self._conn:
+            first_run = self._conn.execute(
+                """INSERT INTO settings (key, value) VALUES (?, '1')
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                   WHERE settings.value != excluded.value""",
+                (LEGACY_PAIRS_FLAG,),
+            ).rowcount
+            if first_run:
+                self._link_unambiguous_pairs()
+
+    def _link_unambiguous_pairs(self, *, imported_only: bool = False) -> None:
+        rows = self._conn.execute(
+            """SELECT id, product, side, quantity, category, dealt_at, parent_id, legacy_id
+               FROM deals"""
+        ).fetchall()
+        linked_buys = {row["parent_id"] for row in rows if row["side"] == "sell"}
+        groups: dict[tuple[str, str, float], list[tuple[datetime, int, str]]] = (
+            defaultdict(list)
+        )
+        for row in rows:
+            if row["parent_id"] is not None or row["id"] in linked_buys:
+                continue
+            if imported_only and row["legacy_id"] is None:
+                continue
+            product = " ".join(row["product"].casefold().split())
+            moment = parse_deal_moment(row["dealt_at"])
+            if product and product != "без названия" and moment is not None:
+                key = (product, row["category"], row["quantity"])
+                groups[key].append((moment, row["id"], row["side"]))
+
+        pairs: list[tuple[int, int]] = []
+        for events in groups.values():
+            # Сопоставляем одиночные циклы покупки и продажи. Несколько
+            # открытых покупок или лишняя продажа делают цикл неоднозначным.
+            cycle: list[int] = []
+            open_buys = 0
+            for _, deal_id, side in sorted(events):
+                if side == "buy":
+                    if open_buys == 0:
+                        if len(cycle) == 2:
+                            pairs.append((cycle[0], cycle[1]))
+                        cycle.clear()
+                    open_buys += 1
+                elif cycle:
+                    open_buys = max(0, open_buys - 1)
+                else:
+                    continue
+                cycle.append(deal_id)
+            if open_buys == 0 and len(cycle) == 2:
+                pairs.append((cycle[0], cycle[1]))
+
+        self._conn.executemany(
+            "UPDATE deals SET parent_id = ? WHERE id = ? AND parent_id IS NULL",
+            pairs,
+        )
 
     def _auto_import_legacy(
         self, source: str | Path | None = None
@@ -255,31 +313,31 @@ class Database:
         ]
         if "viewed_at" in table_columns:  # very old databases
             names.insert(4, "viewed_at")
-        before = self._deal_count()
-        self._conn.executemany(
-            f"""INSERT OR IGNORE INTO deals ({", ".join(names)})
-                VALUES ({", ".join("?" for _ in names)})""",
-            [
-                tuple(
-                    {
-                        "product": deal.product,
-                        "side": deal.side,
-                        "amount": deal.amount,
-                        "viewed_at": "",
-                        "dealt_at": deal.dealt_at,
-                        "comment": deal.comment,
-                        "photo": deal.photo,
-                        "created_at": deal.created_at,
-                        "category": "transport",
-                        "legacy_id": deal.legacy_id,
-                    }[name]
-                    for name in names
-                )
-                for deal in rows
-            ],
-        )
-        self._conn.commit()
-        inserted = self._deal_count() - before
+        with self._conn:
+            inserted = self._conn.executemany(
+                f"""INSERT OR IGNORE INTO deals ({", ".join(names)})
+                    VALUES ({", ".join("?" for _ in names)})""",
+                [
+                    tuple(
+                        {
+                            "product": deal.product,
+                            "side": deal.side,
+                            "amount": deal.amount,
+                            "viewed_at": "",
+                            "dealt_at": deal.dealt_at,
+                            "comment": deal.comment,
+                            "photo": deal.photo,
+                            "created_at": deal.created_at,
+                            "category": "transport",
+                            "legacy_id": deal.legacy_id,
+                        }[name]
+                        for name in names
+                    )
+                    for deal in rows
+                ],
+            ).rowcount
+            if inserted and self.get_setting(LEGACY_PAIRS_FLAG, "0") == "1":
+                self._link_unambiguous_pairs(imported_only=True)
         self.legacy_imported += inserted
         if inserted:
             self._renumber_sort_keys()

@@ -14,7 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import (
+    QColor, QFont, QFontDatabase, QLinearGradient, QPainter, QPainterPath, QPen,
+)
 
 from .paths import resource_path
 
@@ -120,24 +123,24 @@ class Theme:
 
 DARK = Theme(
     name="dark",
-    bg="#0B0A10",
-    bg_top="#100E17",
-    bg_bottom="#08070C",
-    panel="#121119",
-    panel_top="#17151F",
-    card="#1B1923",
-    card_hover="#211E2B",
-    surface="#252231",
-    surface_hover="#2D293A",
-    input_bg="#17141F",
-    input_focus="#1C1828",
-    border="#2C2838",
-    border_soft="#211E2B",
-    border_strong="#3A3449",
+    bg="#0C0912",
+    bg_top="#100B19",
+    bg_bottom="#090711",
+    panel="#100D18",
+    panel_top="#181222",
+    card="#171320",
+    card_hover="#21182E",
+    surface="#241933",
+    surface_hover="#30213F",
+    input_bg="#15101E",
+    input_focus="#1C142A",
+    border="#342744",
+    border_soft="#272036",
+    border_strong="#514067",
     text="#F5F2FA",
     text_soft="#CFC9DC",
     muted="#A3A0AE",
-    faint="#7C7788",
+    faint="#9B90A9",
     profit=PROFIT,
     loss=LOSS,
     overlay="rgba(5, 4, 9, 232)",
@@ -262,6 +265,68 @@ def app_font(point_size: int = 10) -> QFont:
 # ------------------------------------------------------------------ colour math
 def qcolor(value: str | QColor) -> QColor:
     return value if isinstance(value, QColor) else QColor(value)
+
+
+def saturated_accent(value: str | QColor) -> QColor:
+    color = qcolor(value)
+    hue, saturation, brightness, _ = color.getHsvF()
+    if hue < 0 or saturation < 0.06:
+        return QColor(color)
+    return QColor.fromHsvF(hue, max(0.79, saturation), brightness)
+
+
+def paint_accent_ribbon(
+    painter: QPainter, rect: QRectF, accent: QColor, strength: float, *, flip: bool = False
+) -> None:
+    """Paint a soft colored ribbon without adding a composited widget layer."""
+    painter.save()
+    painter.translate(rect.left(), rect.top())
+    painter.scale(rect.width(), rect.height())
+    if flip:
+        painter.translate(0, 1)
+        painter.scale(1, -1)
+
+    edge = QPainterPath()
+    edge.moveTo(-0.08, 0.89)
+    edge.cubicTo(0.25, 1.05, 0.50, 0.79, 0.66, 0.65)
+    edge.cubicTo(0.85, 0.47, 0.96, 0.23, 1.02, -0.15)
+    ribbon = QPainterPath(edge)
+    ribbon.cubicTo(0.98, 0.45, 0.89, 0.65, 0.70, 0.84)
+    ribbon.cubicTo(0.44, 1.11, 0.20, 1.16, -0.08, 0.89)
+    ribbon.closeSubpath()
+
+    bright = QColor(accent)
+    transparent = QColor(bright)
+    transparent.setAlpha(0)
+    glow = QColor(bright)
+    glow.setAlphaF(strength * 0.28)
+    fill = QLinearGradient(0.07, 1.0, 0.95, 0.18)
+    fill.setColorAt(0.0, transparent)
+    fill.setColorAt(0.60, glow)
+    fill.setColorAt(1.0, transparent)
+    painter.fillPath(ribbon, fill)
+
+    line = QLinearGradient(0.04, 0.97, 0.94, 0.12)
+    highlight = blend(bright, "#FFFFFF", 0.18)
+    highlight.setAlphaF(strength * 0.78)
+    line.setColorAt(0.0, transparent)
+    line.setColorAt(0.62, highlight)
+    line.setColorAt(0.83, highlight)
+    line.setColorAt(1.0, transparent)
+    pen = QPen(line, 1.25)
+    pen.setCosmetic(True)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for width, opacity in ((11.0, 0.07), (5.5, 0.16)):
+        pen.setWidthF(width)
+        painter.setPen(pen)
+        painter.setOpacity(opacity)
+        painter.drawPath(edge)
+    pen.setWidthF(1.25)
+    painter.setPen(pen)
+    painter.setOpacity(1.0)
+    painter.drawPath(edge)
+    painter.restore()
 
 
 def _channel_luminance(value: int) -> float:

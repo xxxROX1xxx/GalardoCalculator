@@ -150,10 +150,11 @@ def main() -> int:
     app.setApplicationDisplayName("Galardo")
     app.setStyle("Fusion")
 
-    from galardo import design, icons, theme
+    from galardo import __version__, design, icons, theme
     from galardo.db import Database
     from galardo.mainwindow import MainWindow
 
+    app.setApplicationVersion(__version__)
     app.setFont(design.app_font())
     app.setWindowIcon(icons.app_icon())
     assets = icons.ensure_ui_assets()

@@ -48,8 +48,25 @@ QFrame#Panel {
 }
 QLabel#AppTitle {
     color: @TEXT@;
-    font-size: @FS_SUBTITLE@px;
-    font-weight: 600;
+    font-size: @FS_DISPLAY@px;
+    font-weight: 700;
+}
+QFrame#WindowHeader { border-bottom: 1px solid @BORDER_SOFT@; }
+QFrame#LocalDatabase {
+    background: @TOP_STATS_BG@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: 14px;
+}
+QLabel#LocalDatabaseLabel { color: @TEXT_SOFT@; font-size: @FS_CAPTION@px; }
+QLabel#LocalDatabaseDot { background: @PROFIT@; border-radius: 4px; }
+QLabel#PanelEmblem, QLabel#TotalEmblem {
+    background: @EMBLEM_BG@;
+    border: 1px solid @ACCENT_BORDER_SOFT@;
+    border-radius: @R_TAB@px;
+}
+QLabel#ShortcutHint {
+    color: @MUTED@;
+    font-size: @FS_CAPTION@px;
 }
 QWidget#CrossfadeOverlay {
     background: transparent;
@@ -62,7 +79,7 @@ QFrame#TopStats {
 }
 QLabel#TopStatValue {
     color: @TEXT@;
-    font-size: @FS_SUBTITLE@px;
+    font-size: @FS_TITLE@px;
     font-weight: 700;
 }
 QLabel#TopStatValue[state="positive"] { color: @PROFIT@; }
@@ -72,19 +89,10 @@ QLabel#TopStatLabel {
     font-size: @FS_MICRO@px;
     font-weight: 500;
 }
-QFrame#TopDivider {
-    background-color: @BORDER@;
-    border: none;
-    border-radius: 0px;
-}
 QLabel#PanelTitle {
     color: @TEXT@;
     font-size: @FS_DISPLAY@px;
     font-weight: 700;
-}
-QLabel#PanelSubtitle {
-    color: @MUTED@;
-    font-size: @FS_LABEL@px;
 }
 QWidget#FormContent { background-color: transparent; }
 QFrame#Divider {
@@ -94,7 +102,7 @@ QFrame#Divider {
 }
 QLabel#FieldLabel {
     color: @MUTED@;
-    font-size: @FS_LABEL@px;
+    font-size: @FS_BODY@px;
     font-weight: 500;
 }
 QLabel#SectionHeader {
@@ -136,6 +144,33 @@ QPushButton#Tab:checked {
     color: @ACCENT_TEXT@;
     font-weight: 700;
 }
+QFrame#HistoryTabs {
+    background: @TOP_STATS_BG@;
+    border: 1px solid @BORDER_SOFT@;
+    border-radius: @R_CARD@px;
+}
+QFrame#HistoryTabs QPushButton#Tab { padding: 7px 5px; }
+QFrame#HistoryTabs QPushButton#Tab:checked {
+    background: @HISTORY_TAB_BG@;
+    border-color: @ACCENT_BORDER_SOFT@;
+    border-bottom: 2px solid @ACCENT@;
+    color: @HISTORY_TAB_TEXT@;
+}
+QToolButton#HistoryFilter {
+    background: @TOP_STATS_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_FIELD@px;
+}
+QToolButton#HistoryFilter:hover { border-color: @ACCENT_BORDER_SOFT@; }
+QToolButton#HistoryFilter::menu-indicator { image: none; }
+QMenu#HistoryFilterMenu {
+    background: @PANEL@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_CHIP@px;
+    padding: 5px;
+}
+QMenu#HistoryFilterMenu::item { padding: 7px 18px; border-radius: 5px; }
+QMenu#HistoryFilterMenu::item:selected { background: @SURFACE_HOVER@; }
 QFrame#WeekHeader {
     background: @HEADER_BG@;
     border: 1px solid @BORDER_SOFT@;
@@ -169,6 +204,8 @@ QFrame#PairCard {
     border-radius: @R_CARD@px;
 }
 QFrame#PairCard:hover { border-color: @BORDER@; }
+QFrame#PairCard[state="positive"] { background: @PAIR_PROFIT_BG@; border-color: @PROFIT_BORDER@; }
+QFrame#PairCard[state="negative"] { background: @PAIR_LOSS_BG@; border-color: @LOSS_BORDER@; }
 QFrame#PairStrip {
     border: none;
     background-color: @BORDER@;
@@ -216,7 +253,7 @@ QLabel#DealThumb {
 }
 QLabel#EmptyTitle { color: @TEXT_SOFT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
 QLabel#EmptyHint { color: @MUTED@; font-size: @FS_LABEL@px; }
-QLabel#PhotoTitle { color: @TEXT_SOFT@; font-size: @FS_LABEL@px; font-weight: 500; }
+QLabel#PhotoTitle { color: @TEXT@; font-size: @FS_BODY@px; font-weight: 600; }
 QLabel#PhotoHint { color: @FAINT@; font-size: @FS_CAPTION@px; }
 QLabel#PhotoIcon {
     background-color: @SURFACE_SOFT@;
@@ -293,6 +330,9 @@ QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
     background-color: @SURFACE_SOFT@;
 }
 QTextEdit { padding: 9px 11px; }
+QLineEdit#DealDate { padding-left: 8px; padding-right: 7px; }
+QWidget#FormContent QLineEdit, QWidget#FormContent QComboBox,
+QWidget#FormContent QTextEdit { font-size: @FS_SUBTITLE@px; }
 QComboBox { padding-right: 34px; }
 QComboBox::drop-down {
     border: none;
@@ -341,7 +381,7 @@ QPushButton:disabled {
     color: @FAINT@;
 }
 QPushButton#Submit, QPushButton#Primary {
-    background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 @ACCENT_GRADIENT_FROM@, stop: 1 @ACCENT_GRADIENT_TO@);
+    background: @SUBMIT_BG@;
     border: 1px solid @SUBMIT_BORDER@;
     border-radius: @R_BUTTON@px;
     padding: 11px;
@@ -349,8 +389,9 @@ QPushButton#Submit, QPushButton#Primary {
     font-weight: 600;
     color: @SUBMIT_TEXT@;
 }
+QPushButton#Submit { font-size: @FS_SUBTITLE@px; font-weight: 700; }
 QPushButton#Submit:hover, QPushButton#Primary:hover {
-    background-color: @SUBMIT_HOVER@;
+    background: @SUBMIT_HOVER@;
     border-color: @SUBMIT_BORDER@;
     color: @SUBMIT_TEXT@;
 }
@@ -545,19 +586,17 @@ QFrame#TotalBar {
     border-radius: @R_CARD@px;
 }
 QFrame#TotalBar[state="negative"] {
-    background-color: @TOTAL_NEG_BG@;
-    border: 1px solid @LOSS_BORDER@;
+    background: @TOTAL_NEG_BG@;
 }
 QFrame#TotalBar[state="positive"] {
-    background-color: @TOTAL_POS_BG@;
-    border: 1px solid @PROFIT_BORDER@;
+    background: @TOTAL_POS_BG@;
 }
 QLabel#TotalCaption {
-    color: @MUTED@;
+    color: @TEXT@;
     font-size: @FS_BODY@px;
     font-weight: 600;
 }
-QLabel#TotalValue { color: @TEXT@; font-size: @FS_TITLE@px; font-weight: 700; }
+QLabel#TotalValue { color: @TEXT@; font-size: @FS_DISPLAY@px; font-weight: 700; }
 QLabel#TotalValue[state="negative"] { color: @LOSS@; }
 QLabel#TotalValue[state="positive"] { color: @PROFIT@; }
 
@@ -939,11 +978,24 @@ def _qss_tokens(
         accent_color, accent_surface, toward_white=not light, minimum=4.5
     ).name()
 
-    submit_bg = profile.base
+    submit_bg = _material(profile.gradient_from, profile.gradient_to)
     submit_hover = profile.hover
     submit_pressed = profile.pressed
     submit_border = profile.base
     submit_text = profile.on
+    neon = design.saturated_accent(accent_color)
+    if not light:
+        deep = design.mix(neon, theme.bg_bottom, 0.69)
+        vivid = design.ensure_contrast(
+            design.mix(neon, theme.bg_bottom, 0.34), "#FFFFFF", toward_white=False
+        ).name()
+        submit_bg = (
+            "qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, "
+            f"stop: 0 {vivid}, stop: 0.55 {deep}, stop: 1 {vivid})"
+        )
+        submit_hover = _material(vivid, deep)
+        submit_pressed = deep
+        submit_text = "#FFFFFF"
 
     if light:
         primary_bg = theme.text
@@ -990,8 +1042,8 @@ def _qss_tokens(
     loss_badge = design.rgba(loss, 0.16 if not light else 0.12)
     profit_badge = design.rgba(profit, 0.15 if not light else 0.12)
     total_bg = design.mix(theme.panel, theme.surface, 0.34 if not light else 0.52)
-    total_neg = design.mix(theme.panel, loss, 0.12 if not light else 0.07)
-    total_pos = design.mix(theme.panel, profit, 0.10 if not light else 0.07)
+    total_neg = design.mix(theme.panel, loss, 0.035 if not light else 0.07)
+    total_pos = design.mix(theme.panel, profit, 0.035 if not light else 0.07)
     embed_bg = design.mix(theme.card, theme.bg, 0.30 if not light else 0.18)
     embed_hover = design.mix(theme.card, theme.surface_hover, 0.45 if not light else 0.55)
 
@@ -1064,7 +1116,9 @@ def _qss_tokens(
             "qlineargradient(x1: 0, y1: 0, x2: 0.6, y2: 1, "
             f"stop: 0 {panel_glow}, stop: 0.5 {theme.panel}, stop: 1 {theme.panel})"
         ),
-        "PANEL_EDGE": theme.border,
+        "PANEL_EDGE": theme.border if light else _material(
+            design.rgba(accent_color, 0.58), theme.border
+        ),
         "DIALOG_BG": theme.panel,
         "CAL_BG": theme.panel,
         "ON_ACCENT": on_accent.name(),
@@ -1074,8 +1128,20 @@ def _qss_tokens(
         "HEADER_HOVER": header_hover,
         "PAIR_BG": pair_bg,
         "PAIR_HOVER": pair_hover,
+        "PAIR_PROFIT_BG": _material(
+            design.mix(theme.card, profit, 0.12 if light else 0.19), theme.card
+        ),
+        "PAIR_LOSS_BG": _material(
+            design.mix(theme.card, loss, 0.10 if light else 0.14), theme.card
+        ),
         "PILL_BG": pill_bg,
         "TOP_STATS_BG": surface_soft,
+        "EMBLEM_BG": _material(accent_soft_strong, accent_soft),
+        "HISTORY_TAB_BG": _material(
+            accent_soft if light else design.rgba(neon, 0.16),
+            accent_soft_strong if light else design.rgba(neon, 0.52),
+        ),
+        "HISTORY_TAB_TEXT": accent_text if light else theme.text,
         "CHIP_BG": chip_bg,
         "CHECKED_BG": accent_soft,
         "TAB_ACTIVE_BG": accent_soft,

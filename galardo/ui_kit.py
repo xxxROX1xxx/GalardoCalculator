@@ -7,8 +7,8 @@ logic and simply reuse these primitives where a generic component is enough.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, theme
+from . import design, icons, theme
 
 
 class Panel(QFrame):
@@ -28,6 +28,38 @@ class Panel(QFrame):
         super().__init__(parent)
         self.setObjectName("Panel")
         self.setProperty("role", role)
+
+
+class _RibbonSurface:
+    def set_ribbon_accent(self, accent: str) -> None:
+        self._ribbon_accent = QColor(accent)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        accent = getattr(self, "_ribbon_accent", None)
+        if accent is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 10, 10)
+        painter.setClipPath(clip)
+        width, height = self.width(), self.height()
+        design.paint_accent_ribbon(
+            painter,
+            QRectF(width * 0.26, height * 0.35, width * 0.58, height * 0.9),
+            accent,
+            0.76 if theme.active_theme() == "dark" else 0.35,
+        )
+
+
+class RibbonFrame(_RibbonSurface, QFrame):
+    """A frame with a decorative accent ribbon behind its content."""
+
+
+class RibbonButton(_RibbonSurface, QPushButton):
+    """A push button with a decorative accent ribbon near the bottom."""
 
 
 class Card(QFrame):

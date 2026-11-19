@@ -25,6 +25,7 @@ THEMES: dict[str, str] = {
 }
 
 _ACTIVE_THEME = DEFAULT_THEME
+_ACTIVE_LIQUID_GLASS = False
 
 
 # ----------------------------------------------------------------------- QSS
@@ -41,8 +42,8 @@ QLabel {
 
 /* -------------------------------------------------------------------- panels */
 QFrame#Panel {
-    background: qlineargradient(x1: 0, y1: 0, x2: 0.3, y2: 1, stop: 0 @PANEL_GLOW@, stop: 0.62 @PANEL_TOP@, stop: 1 @PANEL@);
-    border: 1px solid @BORDER@;
+    background: @PANEL_MATERIAL@;
+    border: 1px solid @PANEL_EDGE@;
     border-radius: @R_PANEL@px;
 }
 QLabel#AppTitle {
@@ -55,7 +56,7 @@ QWidget#CrossfadeOverlay {
     border: none;
 }
 QFrame#TopStats {
-    background-color: @SURFACE_SOFT@;
+    background: @TOP_STATS_BG@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_ROW@px;
 }
@@ -103,7 +104,7 @@ QLabel#SectionHeader {
     padding: 2px 0px 6px 0px;
 }
 QLabel#HistoryPill {
-    background-color: @PILL_BG@;
+    background: @PILL_BG@;
     border: 1px solid @BORDER@;
     border-radius: @R_TAB@px;
     padding: 7px 14px;
@@ -136,12 +137,12 @@ QPushButton#Tab:checked {
     font-weight: 700;
 }
 QFrame#WeekHeader {
-    background-color: @HEADER_BG@;
+    background: @HEADER_BG@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_HEADER@px;
 }
 QFrame#WeekHeader:hover {
-    background-color: @HEADER_HOVER@;
+    background: @HEADER_HOVER@;
     border-color: @BORDER@;
 }
 QLabel#WeekChevron { color: @MUTED@; font-size: @FS_CAPTION@px; }
@@ -163,7 +164,7 @@ QLabel#DragHandle {
 QLabel#DragHandle:hover { background-color: @SURFACE@; }
 QLabel#DragHandle:pressed { background-color: @SURFACE_HOVER@; }
 QFrame#PairCard {
-    background-color: @PAIR_BG@;
+    background: @PAIR_BG@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_CARD@px;
 }
@@ -230,8 +231,26 @@ QLabel#PopupSection {
     font-weight: 600;
 }
 QLabel#PopupHint { color: @FAINT@; font-size: @FS_CAPTION@px; }
+QCheckBox#LiquidGlass {
+    background: @BTN_BG@;
+    border: 1px solid @BORDER@;
+    border-radius: @R_TAB@px;
+    padding: 8px 10px;
+    spacing: 8px;
+    color: @TEXT@;
+    font-weight: 600;
+}
+QCheckBox#LiquidGlass:hover { background: @BTN_HOVER@; }
+QCheckBox#LiquidGlass:checked { background: @CHECKED_BG@; }
+QCheckBox#LiquidGlass:focus { border-color: @ACCENT@; }
+QCheckBox#LiquidGlass::indicator {
+    width: 15px;
+    height: 15px;
+    background: transparent;
+    border: none;
+}
 QFrame#AccentPreview {
-    background-color: @SURFACE_SOFT@;
+    background: @TOP_STATS_BG@;
     border: 1px solid @ACCENT_BORDER_SOFT@;
     border-radius: @R_ROW@px;
 }
@@ -302,7 +321,7 @@ QComboBox QAbstractItemView::item {
 
 /* ------------------------------------------------------------------- buttons */
 QPushButton {
-    background-color: @BTN_BG@;
+    background: @BTN_BG@;
     border: 1px solid @BORDER@;
     border-radius: @R_BUTTON@px;
     padding: 8px 14px;
@@ -311,7 +330,7 @@ QPushButton {
     font-weight: 500;
 }
 QPushButton:hover {
-    background-color: @BTN_HOVER@;
+    background: @BTN_HOVER@;
     border-color: @ACCENT_BORDER_SOFT@;
     color: @TEXT@;
 }
@@ -384,6 +403,7 @@ QPushButton#PopupGhost:checked {
     border-color: @ACCENT_BORDER_SOFT@;
     color: @ACCENT_TEXT@;
 }
+QPushButton#PopupGhost:focus { border-color: @ACCENT@; }
 QPushButton#PopupGhost:disabled {
     background-color: transparent;
     border-color: @BORDER_SOFT@;
@@ -430,17 +450,18 @@ QToolButton#WinBtn {
     padding: 0px;
 }
 QToolButton#WinBtn:hover { background-color: @SURFACE@; }
+QToolButton#WinBtn:focus { border-color: @ACCENT@; }
 QToolButton#WinClose {
     border-radius: @R_ICON@px;
     padding: 0px;
 }
 QToolButton#WinClose:hover { background-color: @DANGER@; }
 QToolButton#OverlayClose {
-    background-color: @SURFACE_TRANSLUCENT@;
-    border: 1px solid @BORDER@;
+    background-color: @OVERLAY_BUTTON_BG@;
+    border: 1px solid @OVERLAY_BUTTON_EDGE@;
     border-radius: 16px;
 }
-QToolButton#OverlayClose:hover { background-color: @SURFACE_HOVER@; }
+QToolButton#OverlayClose:hover { background-color: @OVERLAY_BUTTON_HOVER@; }
 
 /* --------------------------------------------------------------------- photo */
 QFrame#PhotoDrop {
@@ -459,23 +480,23 @@ QFrame#PhotoDrop[filled="true"] {
 
 /* --------------------------------------------------------------------- cards */
 QFrame#DealCard, QFrame#TransactionCard {
-    background-color: @CARD@;
+    background: @CARD@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_CARD@px;
 }
 QFrame#DealCard:hover, QFrame#TransactionCard:hover {
-    background-color: @CARD_HOVER@;
+    background: @CARD_HOVER@;
     border-color: @BORDER@;
 }
 QFrame#DealCard[side="buy"] { border-left: 2px solid @LOSS_BORDER@; }
 QFrame#DealCard[side="sell"] { border-left: 2px solid @PROFIT_BORDER@; }
 QFrame#DealCard[embedded="true"] {
-    background-color: @EMBED_BG@;
+    background: @EMBED_BG@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_ROW@px;
 }
 QFrame#DealCard[embedded="true"]:hover {
-    background-color: @EMBED_HOVER@;
+    background: @EMBED_HOVER@;
     border-color: @BORDER@;
 }
 QFrame#TransactionCard[side="buy"] {
@@ -519,7 +540,7 @@ QLabel#AmountSell { color: @PROFIT@; font-size: @FS_SUBTITLE@px; font-weight: 60
 
 /* --------------------------------------------------------------------- total */
 QFrame#TotalBar {
-    background-color: @TOTAL_BG@;
+    background: @TOTAL_BG@;
     border: 1px solid @BORDER_STRONG@;
     border-radius: @R_CARD@px;
 }
@@ -542,12 +563,12 @@ QLabel#TotalValue[state="positive"] { color: @PROFIT@; }
 
 /* -------------------------------------------------------------------- market */
 QFrame#MarketRow {
-    background-color: @CARD@;
+    background: @CARD@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_ROW@px;
 }
 QFrame#MarketRow:hover {
-    background-color: @CARD_HOVER@;
+    background: @CARD_HOVER@;
     border-color: @ACCENT_BORDER_SOFT@;
 }
 QLabel#MarketThumb {
@@ -562,12 +583,12 @@ QLabel#MarketMeta { color: @FAINT@; font-size: @FS_CAPTION@px; }
 QLabel#MarketPrice { color: @TEXT@; font-size: @FS_LABEL@px; font-weight: 600; }
 QLabel#MarketSold { color: @FAINT@; font-size: @FS_CAPTION@px; }
 QFrame#MarketCard {
-    background-color: @CARD@;
+    background: @CARD@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_CARD_LARGE@px;
 }
 QFrame#MarketStat {
-    background-color: @STAT_BG@;
+    background: @STAT_BG@;
     border: 1px solid @BORDER_SOFT@;
     border-radius: @R_ROW@px;
 }
@@ -593,7 +614,7 @@ QLabel#TableCell[state="down"] { color: @LOSS@; }
 
 /* -------------------------------------------------------------- market trade */
 QFrame#TradeCard {
-    background-color: @CARD@;
+    background: @CARD@;
     border: 1px solid @BORDER@;
     border-radius: @R_CARD_LARGE@px;
 }
@@ -661,6 +682,9 @@ QScrollBar::handle:vertical {
     min-height: 28px;
 }
 QScrollBar::handle:vertical:hover { background: @ACCENT_LIGHT@; }
+QScrollArea#MarketDetailScroll QScrollBar::handle:vertical:disabled {
+    background: transparent;
+}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background: transparent;
@@ -669,16 +693,16 @@ QScrollBar:horizontal { height: 0px; }
 
 /* ----------------------------------------------------------- calendar popup */
 QFrame#PopupCard {
-    background: qlineargradient(x1: 0, y1: 0, x2: 0.6, y2: 1, stop: 0 @PANEL_GLOW@, stop: 0.5 @PANEL@, stop: 1 @PANEL@);
-    border: 1px solid @BORDER@;
+    background: @POPUP_MATERIAL@;
+    border: 1px solid @PANEL_EDGE@;
     border-radius: @R_POPUP@px;
 }
 QCalendarWidget QWidget {
-    background-color: @PANEL@;
+    background-color: @CAL_BG@;
     color: @TEXT@;
 }
 QCalendarWidget QWidget#qt_calendar_navigationbar {
-    background-color: @PANEL@;
+    background-color: @CAL_BG@;
     border-bottom: 1px solid @BORDER_SOFT@;
 }
 QCalendarWidget QToolButton {
@@ -705,7 +729,7 @@ QCalendarWidget QSpinBox {
     selection-background-color: @ACCENT@;
 }
 QCalendarWidget QAbstractItemView:enabled {
-    background-color: @PANEL@;
+    background-color: @CAL_BG@;
     alternate-background-color: @CAL_ALT@;
     color: @TEXT_SOFT@;
     selection-background-color: @ACCENT@;
@@ -716,19 +740,19 @@ QCalendarWidget QAbstractItemView:enabled {
 }
 QCalendarWidget QAbstractItemView:disabled { color: @FAINT@; }
 QCalendarWidget QTableView {
-    background-color: @PANEL@;
+    background-color: @CAL_BG@;
     alternate-background-color: @CAL_ALT@;
     selection-background-color: @ACCENT@;
     selection-color: @ON_ACCENT@;
     border: none;
 }
 QCalendarWidget QHeaderView {
-    background-color: @PANEL@;
+    background-color: @CAL_BG@;
     color: @MUTED@;
     border: none;
 }
 QCalendarWidget QHeaderView::section {
-    background-color: @PANEL@;
+    background-color: @CAL_BG@;
     color: @MUTED@;
     border: none;
     padding: 3px 0px;
@@ -750,7 +774,7 @@ QToolTip {
     padding: 6px 9px;
 }
 QLabel#Toast {
-    background-color: @TOAST_BG@;
+    background: @TOAST_BG@;
     border: 1px solid @BORDER@;
     border-radius: @R_HEADER@px;
     padding: 9px 16px;
@@ -758,7 +782,7 @@ QLabel#Toast {
     font-size: @FS_LABEL@px;
 }
 QMessageBox {
-    background-color: @PANEL@;
+    background: @DIALOG_BG@;
 }
 QMessageBox QLabel {
     color: @TEXT@;
@@ -767,9 +791,18 @@ QMessageBox QLabel {
 }
 QMessageBox QPushButton { min-width: 84px; }
 QWidget#ImageOverlay { background-color: @OVERLAY@; }
-QLabel#OverlayHint { color: @MUTED@; font-size: @FS_LABEL@px; }
-QLabel#OverlayTitle { color: @TEXT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
+QLabel#OverlayHint { color: @OVERLAY_HINT@; font-size: @FS_LABEL@px; }
+QLabel#OverlayTitle { color: @OVERLAY_TEXT@; font-size: @FS_SUBTITLE@px; font-weight: 600; }
 QSizeGrip { background-color: transparent; }
+"""
+
+LIQUID_GLASS_QSS = r"""
+QPushButton#Tab:focus, QPushButton#Ghost:focus,
+QPushButton#TradeSide:focus, QPushButton#TradeQuick:focus,
+QToolButton#IconBtn:focus {
+    border-color: @ACCENT@;
+}
+QLineEdit, QTextEdit { placeholder-text-color: @FAINT@; }
 """
 
 # Backwards-compatible aliases: old code exposed the raw QSS blocks.
@@ -778,10 +811,11 @@ LIGHT_QSS = ""
 
 
 # ------------------------------------------------------------------ utilities
-def set_active_theme(theme_name: str) -> str:
+def set_active_theme(theme_name: str, *, liquid_glass: bool = False) -> str:
     """Remember the theme so widgets can pick readable icon colours."""
-    global _ACTIVE_THEME
+    global _ACTIVE_THEME, _ACTIVE_LIQUID_GLASS
     _ACTIVE_THEME = theme_name if theme_name in THEMES else DEFAULT_THEME
+    _ACTIVE_LIQUID_GLASS = liquid_glass
     return _ACTIVE_THEME
 
 
@@ -789,18 +823,20 @@ def active_theme() -> str:
     return _ACTIVE_THEME
 
 
+def active_liquid_glass() -> bool:
+    return _ACTIVE_LIQUID_GLASS
+
+
 def icon_tone(role: str = "muted") -> str:
     """Icon colour that stays readable in either theme."""
-    dark = design.DARK
-    light = design.LIGHT
+    colors = design.tokens(_ACTIVE_THEME, liquid_glass=_ACTIVE_LIQUID_GLASS)
     tones = {
-        "muted": (dark.muted, light.muted),
-        "text": (dark.text, light.text),
-        "strong": (dark.text_soft, light.text_soft),
-        "faint": (dark.faint, light.faint),
+        "muted": colors.muted,
+        "text": colors.text,
+        "strong": colors.text_soft,
+        "faint": colors.faint,
     }
-    dark_color, light_color = tones.get(role, tones["muted"])
-    return light_color if _ACTIVE_THEME == "light" else dark_color
+    return tones.get(role, colors.muted)
 
 
 # -------------------------------------------------------------- colour helpers
@@ -814,6 +850,24 @@ def accent_profile(
 def theme_accent(accent: str, theme_name: str = DEFAULT_THEME) -> QColor:
     """Accent used for painting: always readable on the theme background."""
     return QColor(accent_profile(accent, theme_name).base)
+
+
+def glass_washes(accent: str, theme_name: str) -> tuple[QColor, QColor]:
+    primary = theme_accent(accent, theme_name)
+    reflection = design.blend(primary, design.GLASS_REFLECTION, 0.65)
+    light = theme_name == "light"
+    colors = design.tokens(theme_name, liquid_glass=True)
+    for wash, opacity in (
+        (primary, 0.28 if light else 0.46),
+        (reflection, 0.25 if light else 0.42),
+    ):
+        # Keep title-bar text readable with unusually bright or dark accents.
+        while design.contrast_ratio(
+            design.blend(colors.bg, wash, opacity), colors.muted
+        ) < 4.5:
+            opacity *= 0.90
+        wash.setAlphaF(opacity)
+    return primary, reflection
 
 
 def shadow_color(
@@ -857,9 +911,11 @@ def _ensure_contrast(
 
 
 # ---------------------------------------------------------------------- tokens
-def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
+def _qss_tokens(
+    theme_name: str, accent: str, *, liquid_glass: bool = False
+) -> dict[str, str]:
     """Map semantic design tokens to the placeholders used by the QSS."""
-    theme = design.tokens(theme_name)
+    theme = design.tokens(theme_name, liquid_glass=liquid_glass)
     profile = accent_profile(accent, theme_name)
     accent_color = QColor(profile.base)
     light = theme_name == "light"
@@ -939,7 +995,7 @@ def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
     embed_bg = design.mix(theme.card, theme.bg, 0.30 if not light else 0.18)
     embed_hover = design.mix(theme.card, theme.surface_hover, 0.45 if not light else 0.55)
 
-    return {
+    tokens = {
         "FONT": design.font_family(),
         # type scale
         "FS_MICRO": str(design.TYPE_SCALE["micro"][0]),
@@ -965,13 +1021,11 @@ def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
         # colours
         "BG": theme.bg,
         "PANEL": theme.panel,
-        "PANEL_TOP": theme.panel_top,
         "CARD": theme.card,
         "CARD_HOVER": theme.card_hover,
         "SURFACE": theme.surface,
         "SURFACE_HOVER": theme.surface_hover,
         "SURFACE_SOFT": surface_soft,
-        "SURFACE_TRANSLUCENT": surface_translucent,
         "INPUT_BG": theme.input_bg,
         "INPUT_FOCUS": input_focus,
         "BORDER": theme.border,
@@ -985,6 +1039,11 @@ def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
         "LOSS": loss,
         "DANGER": design.DANGER,
         "OVERLAY": theme.overlay,
+        "OVERLAY_TEXT": theme.text,
+        "OVERLAY_HINT": theme.muted,
+        "OVERLAY_BUTTON_BG": surface_translucent,
+        "OVERLAY_BUTTON_HOVER": theme.surface_hover,
+        "OVERLAY_BUTTON_EDGE": theme.border,
         # accent
         "ACCENT": profile.base,
         "ACCENT_LIGHT": profile.light,
@@ -997,7 +1056,17 @@ def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
         "ACCENT_GRADIENT_TO": profile.gradient_to,
         "ACCENT_STRONG": profile.dark,
         "ACCENT_TEXT": accent_text,
-        "PANEL_GLOW": panel_glow,
+        "PANEL_MATERIAL": (
+            "qlineargradient(x1: 0, y1: 0, x2: 0.3, y2: 1, "
+            f"stop: 0 {panel_glow}, stop: 0.62 {theme.panel_top}, stop: 1 {theme.panel})"
+        ),
+        "POPUP_MATERIAL": (
+            "qlineargradient(x1: 0, y1: 0, x2: 0.6, y2: 1, "
+            f"stop: 0 {panel_glow}, stop: 0.5 {theme.panel}, stop: 1 {theme.panel})"
+        ),
+        "PANEL_EDGE": theme.border,
+        "DIALOG_BG": theme.panel,
+        "CAL_BG": theme.panel,
         "ON_ACCENT": on_accent.name(),
         "CHEVRON": "@CHEVRON@",
         # component surfaces
@@ -1006,7 +1075,9 @@ def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
         "PAIR_BG": pair_bg,
         "PAIR_HOVER": pair_hover,
         "PILL_BG": pill_bg,
+        "TOP_STATS_BG": surface_soft,
         "CHIP_BG": chip_bg,
+        "CHECKED_BG": accent_soft,
         "TAB_ACTIVE_BG": accent_soft,
         "TAB_ACTIVE_BORDER": accent_border_soft,
         "BTN_BG": btn_bg,
@@ -1042,11 +1113,100 @@ def _qss_tokens(theme_name: str, accent: str) -> dict[str, str]:
         "EMBED_BG": embed_bg,
         "EMBED_HOVER": embed_hover,
     }
+    if liquid_glass:
+        tokens.update(_glass_materials(theme, accent_color, tokens))
+    return tokens
 
 
-def palette(theme_name: str = DEFAULT_THEME, accent: str = DEFAULT_ACCENT) -> QPalette:
+def _material(top: str, bottom: str) -> str:
+    return (
+        "qlineargradient(x1: 0, y1: 0, x2: 0.35, y2: 1, "
+        f"stop: 0 {top}, stop: 1 {bottom})"
+    )
+
+
+def _glass_materials(
+    colors: design.Theme, accent: QColor, tokens: dict[str, str]
+) -> dict[str, str]:
+    light = colors.name == "light"
+    mix, rgba = design.mix, design.rgba
+    glint = mix(accent, "#FFFFFF", 0.82)
+    edge = rgba(accent, 0.32 if light else 0.43)
+    panel_top = mix(colors.panel, accent, 0.08 if light else 0.27)
+    panel_bottom = mix(colors.panel, accent, 0.025 if light else 0.10)
+    popup_top = mix(colors.panel, accent, 0.15 if light else 0.26)
+    card_top = mix(colors.card, glint, 0.55 if light else 0.17)
+    card_bottom = mix(colors.card, accent, 0.07 if light else 0.09)
+    card = _material(rgba(card_top, 0.80), rgba(card_bottom, 0.53 if light else 0.46))
+    inset = _material(
+        rgba(colors.input_bg, 0.70), rgba(card_bottom, 0.57 if light else 0.43)
+    )
+    raised = _material(
+        rgba(glint if light else card_top, 0.68),
+        rgba(card_bottom, 0.60),
+    )
+    soft = rgba(card_top, 0.40)
+    thin_edge = rgba(accent, 0.19 if light else 0.23)
+    overlay_tint = mix(design.DARK.bg, accent, 0.12)
+    return {
+        "PANEL_MATERIAL": _material(
+            rgba(panel_top, 0.48 if light else 0.36),
+            rgba(panel_bottom, 0.62 if light else 0.48),
+        ),
+        "POPUP_MATERIAL": _material(rgba(popup_top, 0.97), rgba(panel_bottom, 0.98)),
+        "PANEL_EDGE": _material(rgba(glint, 0.96 if light else 0.52), edge),
+        "DIALOG_BG": _material(popup_top, panel_bottom),
+        "PANEL": panel_bottom,
+        "BORDER": rgba(accent, 0.26 if light else 0.37),
+        "BORDER_SOFT": thin_edge,
+        "BORDER_STRONG": edge,
+        "CARD": card,
+        # Animated cards blend a tint over these resting materials.
+        "CARD_HOVER": card,
+        "EMBED_BG": inset,
+        "EMBED_HOVER": inset,
+        "HEADER_BG": raised,
+        "HEADER_HOVER": raised,
+        "PAIR_BG": card,
+        "INPUT_BG": rgba(colors.input_bg, 0.72 if light else 0.64),
+        "INPUT_FOCUS": rgba(tokens["INPUT_FOCUS"], 0.88),
+        "SURFACE": rgba(card_top, 0.67),
+        "SURFACE_HOVER": rgba(mix(card_top, accent, 0.25), 0.65),
+        "SURFACE_SOFT": soft,
+        "PILL_BG": raised,
+        "TOP_STATS_BG": raised,
+        "CHIP_BG": soft,
+        "BTN_BG": raised,
+        "BTN_HOVER": _material(rgba(glint, 0.53 if light else 0.25), soft),
+        "BTN_PRESSED": rgba(accent, 0.22),
+        "CHECKED_BG": _material(tokens["ACCENT_SOFT_STRONG"], tokens["ACCENT_SOFT"]),
+        "STAT_BG": raised,
+        "TOTAL_BG": raised,
+        "TOTAL_NEG_BG": rgba(mix(colors.panel, colors.loss, 0.13), 0.73),
+        "TOTAL_POS_BG": rgba(mix(colors.panel, colors.profit, 0.12), 0.73),
+        "BUY_BG": rgba(tokens["BUY_BG"], 0.75),
+        "SELL_BG": rgba(tokens["SELL_BG"], 0.75),
+        "CAL_BG": mix(colors.panel, accent, 0.08 if light else 0.15),
+        "CAL_ALT": mix(colors.panel, accent, 0.11 if light else 0.18),
+        "TOAST_BG": _material(rgba(popup_top, 0.98), rgba(panel_bottom, 0.98)),
+        "SCROLL": edge,
+        "OVERLAY": rgba(overlay_tint, 0.92),
+        "OVERLAY_TEXT": design.DARK.text,
+        "OVERLAY_HINT": design.DARK.text_soft,
+        "OVERLAY_BUTTON_BG": rgba(glint, 0.14),
+        "OVERLAY_BUTTON_HOVER": rgba(glint, 0.25),
+        "OVERLAY_BUTTON_EDGE": rgba(glint, 0.35),
+    }
+
+
+def palette(
+    theme_name: str = DEFAULT_THEME,
+    accent: str = DEFAULT_ACCENT,
+    *,
+    liquid_glass: bool = False,
+) -> QPalette:
     highlight = theme_accent(accent, theme_name)
-    theme = design.tokens(theme_name)
+    theme = design.tokens(theme_name, liquid_glass=liquid_glass)
     result = QPalette()
     roles = {
         QPalette.ColorRole.Window: theme.bg,
@@ -1072,11 +1232,14 @@ def stylesheet(
     chevron_path: str,
     accent: str = DEFAULT_ACCENT,
     theme_name: str = DEFAULT_THEME,
+    *,
+    liquid_glass: bool = False,
 ) -> str:
-    tokens = _qss_tokens(theme_name, accent)
+    tokens = _qss_tokens(theme_name, accent, liquid_glass=liquid_glass)
     tokens["CHEVRON"] = chevron_path.replace("\\", "/")
 
     def replace(match: re.Match[str]) -> str:
         return tokens.get(match.group(1), match.group(0))
 
-    return re.sub(r"@([A-Z0-9_]+)@", replace, QSS_TEMPLATE)
+    template = QSS_TEMPLATE + LIQUID_GLASS_QSS if liquid_glass else QSS_TEMPLATE
+    return re.sub(r"@([A-Z0-9_]+)@", replace, template)

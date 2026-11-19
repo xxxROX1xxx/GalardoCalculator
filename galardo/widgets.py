@@ -18,7 +18,9 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QRect,
     QRectF,
+    QSignalBlocker,
     QSize,
     QTime,
     QTimer,
@@ -29,6 +31,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QDrag,
+    QIcon,
     QImage,
     QIntValidator,
     QKeySequence,
@@ -37,11 +40,13 @@ from PySide6.QtGui import (
     QPalette,
     QPixmap,
     QShortcut,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
     QCalendarWidget,
+    QCheckBox,
     QColorDialog,
     QFileDialog,
     QFrame,
@@ -54,6 +59,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
+    QStyleOptionButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -372,7 +379,13 @@ def crossfade_stack(
 
     snapshot = None
     if stack.isVisible() and stack.width() > 1 and stack.height() > 1:
-        snapshot = stack.grab()
+        if theme.active_liquid_glass():
+            # Include the painted backdrop and the translucent parent panel.
+            window = stack.window()
+            source = QRect(stack.mapTo(window, QPoint()), stack.size())
+            snapshot = window.grab(source)
+        else:
+            snapshot = stack.grab()
     if snapshot is None or snapshot.isNull():
         if update is not None:
             update()
@@ -467,11 +480,20 @@ class HoverSurface:
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
         progress = getattr(self, "_hover_progress", 0.0)
+        glass = theme.active_liquid_glass()
+        if glass and progress <= 0.0:
+            return
         base, hover, radius = self._hover_palette()
+        if glass:
+            fill = self.palette().color(QPalette.ColorRole.Highlight)
+            opacity = 0.13 if theme.active_theme() == "light" else 0.20
+            fill.setAlphaF(opacity * progress)
+        else:
+            fill = design.blend(base, hover, progress)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(design.blend(base, hover, progress))
+        painter.setBrush(fill)
         inset = 1.6
         rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
         painter.drawRoundedRect(rect, radius - inset, radius - inset)
@@ -488,7 +510,11 @@ class PressFeedback(QObject):
         super().__init__(parent)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
-        if isinstance(obj, QAbstractButton) and obj.isEnabled():
+        if (
+            isinstance(obj, QAbstractButton)
+            and not isinstance(obj, QCheckBox)
+            and obj.isEnabled()
+        ):
             kind = event.type()
             if kind == QEvent.Type.MouseButtonPress:
                 self._animate(obj, 0.88, 110, remove=False)
@@ -708,6 +734,29 @@ def _configure_calendar(calendar: QCalendarWidget) -> None:
             palette.setColor(role, app_palette.color(role))
         calendar.setPalette(palette)
 
+    glass = theme.active_liquid_glass()
+    for name, angle in (("prevmonth", 90), ("nextmonth", -90)):
+        button = calendar.findChild(QToolButton, f"qt_calendar_{name}")
+        if button is None:
+            continue
+        original = button.property("originalIcon")
+        if glass:
+            if original is None:
+                button.setProperty("originalIcon", button.icon())
+            chevron = icons.icon_pixmap("chevron", theme.icon_tone("strong"), 32)
+            if calendar.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+                angle = -angle
+            button.setIcon(QIcon(chevron.transformed(QTransform().rotate(angle))))
+        elif original is not None:
+            button.setIcon(original)
+            button.setProperty("originalIcon", None)
+
+    colors = design.tokens(theme.active_theme(), liquid_glass=glass)
+    for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
+        weekend = calendar.weekdayTextFormat(day)
+        weekend.setForeground(QColor(colors.loss) if glass else QColor(Qt.GlobalColor.red))
+        calendar.setWeekdayTextFormat(day, weekend)
+
 
 class PopupBase(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -892,9 +941,36 @@ def _swatch_style(color: str, selected: bool, theme_name: str) -> str:
     )
 
 
+class _AppearanceCheckBox(QCheckBox):
+    def hitButton(self, pos: QPoint) -> bool:  # noqa: N802
+        return self.rect().contains(pos)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        indicator = self.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator, option, self
+        )
+        accent = self.palette().color(QPalette.ColorRole.Highlight)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        box = QRectF(indicator).adjusted(0.5, 0.5, -0.5, -0.5)
+        if self.isChecked():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(accent)
+            painter.drawRoundedRect(box, 3.0, 3.0)
+            mark = icons.icon("check", theme.contrast_text(accent).name())
+            mark.paint(painter, indicator.adjusted(1, 1, -1, -1))
+        else:
+            painter.setPen(QColor(theme.icon_tone("muted")))
+            painter.drawRoundedRect(box, 3.0, 3.0)
+
+
 class SettingsPopup(PopupBase):
     accentChanged = Signal(str)
     themeChanged = Signal(str)
+    liquidGlassChanged = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -927,6 +1003,16 @@ class SettingsPopup(PopupBase):
             theme_row.addWidget(button)
         theme_row.addStretch(1)
         self.body.addLayout(theme_row)
+
+        self._liquid_glass = _AppearanceCheckBox("Liquid Glass")
+        self._liquid_glass.setObjectName("LiquidGlass")
+        self._liquid_glass.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._liquid_glass.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        glass_description = "Полупрозрачные панели и мягкая подсветка"
+        self._liquid_glass.setToolTip(glass_description)
+        self._liquid_glass.setAccessibleDescription(glass_description)
+        self._liquid_glass.toggled.connect(self.liquidGlassChanged)
+        self.body.addWidget(self._liquid_glass)
 
         accent_label = ui_kit.SectionHeader("Вторичный цвет")
         self.body.addWidget(accent_label)
@@ -979,13 +1065,21 @@ class SettingsPopup(PopupBase):
         anchor: QWidget,
         accent: str,
         theme_name: str,
+        *,
+        liquid_glass: bool = False,
     ) -> None:
         self._accent = accent
         self._theme_name = theme_name if theme_name in theme.THEMES else theme.DEFAULT_THEME
         self.blockSignals(True)
         self._sync()
         self.blockSignals(False)
+        self.set_liquid_glass(liquid_glass)
         self.show_at(anchor)
+        self._theme_buttons[self._theme_name].setFocus(Qt.FocusReason.PopupFocusReason)
+
+    def set_liquid_glass(self, enabled: bool) -> None:
+        with QSignalBlocker(self._liquid_glass):
+            self._liquid_glass.setChecked(enabled)
 
     def _sync(self) -> None:
         for key, button in self._theme_buttons.items():
@@ -2135,6 +2229,8 @@ class TitleBar(QWidget):
         self.settings_button.setFixedSize(32, 28)
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.setToolTip("Оформление")
+        self.settings_button.setAccessibleName("Оформление")
+        self.settings_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.settings_button.clicked.connect(self.settingsRequested.emit)
         layout.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
 

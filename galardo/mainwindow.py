@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 
 from PySide6.QtCore import (
@@ -7,6 +8,7 @@ from PySide6.QtCore import (
     QDateTime,
     QEvent,
     QPoint,
+    QPointF,
     QRectF,
     QSize,
     QTimer,
@@ -22,6 +24,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QRadialGradient,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -56,8 +59,9 @@ from .widgets import (
     TitleBar,
     Toast,
     WeekSection,
-    deals_word,
+    clear_crossfade,
     crossfade_stack,
+    deals_word,
     format_money,
     install_press_feedback,
     parse_amount,
@@ -108,6 +112,7 @@ class MainWindow(QWidget):
         self.theme_name = self.db.get_setting("theme", theme.DEFAULT_THEME)
         if self.theme_name not in theme.THEMES:
             self.theme_name = theme.DEFAULT_THEME
+        self.liquid_glass = self.db.get_setting("liquid_glass", "0") == "1"
         self._editing_id: int | None = None
         self._quick_filled = False
         self._active_tab = "all"
@@ -141,6 +146,7 @@ class MainWindow(QWidget):
         self._settings_popup = SettingsPopup(self)
         self._settings_popup.accentChanged.connect(self._on_accent_changed)
         self._settings_popup.themeChanged.connect(self._on_theme_changed)
+        self._settings_popup.liquidGlassChanged.connect(self._set_liquid_glass)
         self._settings_popup.refresh_shadow(self.theme_name, self.accent)
 
         self._overlay = ImageOverlay(self)
@@ -180,14 +186,25 @@ class MainWindow(QWidget):
         return theme.contrast_text(accent).name()
 
     def apply_appearance(self) -> None:
-        theme.set_active_theme(self.theme_name)
+        if hasattr(self, "view_stack"):
+            clear_crossfade(self.view_stack)
+        theme.set_active_theme(self.theme_name, liquid_glass=self.liquid_glass)
+        if self.liquid_glass:
+            self._glass_washes = theme.glass_washes(self.accent, self.theme_name)
         app = QApplication.instance()
         if app is not None:
             assets = icons.ensure_ui_assets()
-            app.setPalette(theme.palette(self.theme_name, self.accent))
+            app.setPalette(
+                theme.palette(
+                    self.theme_name, self.accent, liquid_glass=self.liquid_glass
+                )
+            )
             app.setStyleSheet(
                 theme.stylesheet(
-                    assets["chevron"], self.accent, self.theme_name
+                    assets["chevron"],
+                    self.accent,
+                    self.theme_name,
+                    liquid_glass=self.liquid_glass,
                 )
             )
         self._refresh_icons()
@@ -307,6 +324,8 @@ class MainWindow(QWidget):
         rect = QRectF(panel.mapTo(self, QPoint(0, 0)), panel.size())
         rect.translate(0.0, 5.0)
         base = QColor(self._shadow_color)
+        if self.liquid_glass:
+            base.setAlphaF(base.alphaF() * 0.58)
         radius = float(design.RADIUS["panel"])
         painter.save()
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -1244,6 +1263,7 @@ class MainWindow(QWidget):
             self.title_bar.settings_button,
             self.accent,
             self.theme_name,
+            liquid_glass=self.liquid_glass,
         )
 
     def _on_accent_changed(self, accent: str) -> None:
@@ -1260,6 +1280,23 @@ class MainWindow(QWidget):
         self._toast.show_message(
             "Включена белая тема" if theme_name == "light" else "Включена чёрная тема"
         )
+
+    def _set_liquid_glass(self, enabled: bool) -> None:
+        if not self._on_liquid_glass_changed(enabled):
+            self._settings_popup.set_liquid_glass(self.liquid_glass)
+
+    def _on_liquid_glass_changed(self, enabled: bool) -> bool:
+        if enabled == self.liquid_glass:
+            return True
+        try:
+            with self.db._conn:
+                self.db.set_setting("liquid_glass", "1" if enabled else "0")
+        except sqlite3.Error:
+            self._toast.show_message("Не удалось сохранить настройку Liquid Glass")
+            return False
+        self.liquid_glass = enabled
+        self.apply_appearance()
+        return True
 
     # -------------------------------------------------------------------- events
     def _photo_paste_allowed(self) -> bool:
@@ -1337,8 +1374,38 @@ class MainWindow(QWidget):
             self.update()
         super().changeEvent(event)
 
+    def _paint_glass_backdrop(self, painter: QPainter, rect: QRectF) -> None:
+        primary, reflection = self._glass_washes
+        span = max(rect.width(), rect.height())
+        for x, y, radius, color in (
+            (0.12, 0.14, 0.65, primary),
+            (0.91, 0.82, 0.67, reflection),
+        ):
+            center = QPointF(
+                rect.left() + x * rect.width(), rect.top() + y * rect.height()
+            )
+            wash = QRadialGradient(center, radius * span)
+            wash.setColorAt(0.0, color)
+            outer = QColor(color)
+            outer.setAlpha(0)
+            wash.setColorAt(1.0, outer)
+            painter.fillRect(rect, wash)
+
+        header_bottom = self.title_bar.height()
+        glint = QColor(255, 255, 255, 96 if self.theme_name == "light" else 27)
+        clear = QColor(glint)
+        clear.setAlpha(0)
+        header = QLinearGradient(0, rect.top(), 0, header_bottom)
+        header.setColorAt(0, glint)
+        header.setColorAt(1, clear)
+        painter.fillRect(QRectF(0, 0, rect.width(), header_bottom), header)
+        painter.setPen(QPen(primary, 1))
+        painter.drawLine(
+            QPointF(rect.left(), header_bottom), QPointF(rect.right(), header_bottom)
+        )
+
     def paintEvent(self, event) -> None:  # noqa: N802
-        """Graphite surface with one restrained vertical gradient."""
+        """Paint the clipped backdrop and elevation in the window backing store."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
@@ -1347,12 +1414,14 @@ class MainWindow(QWidget):
         path.addRoundedRect(rect, radius, radius)
         painter.setClipPath(path)
 
-        theme_tokens = design.tokens(self.theme_name)
+        theme_tokens = design.tokens(self.theme_name, liquid_glass=self.liquid_glass)
         base = QLinearGradient(0, 0, 0, self.height())
         base.setColorAt(0.0, QColor(theme_tokens.bg_top))
         base.setColorAt(0.55, QColor(theme_tokens.bg))
         base.setColorAt(1.0, QColor(theme_tokens.bg_bottom))
         painter.fillPath(path, base)
+        if self.liquid_glass:
+            self._paint_glass_backdrop(painter, rect)
 
         for panel in getattr(self, "_panel_surfaces", ()):
             self._paint_panel_shadow(painter, panel)

@@ -11,7 +11,7 @@ borders, restrained gradients and a single adaptive accent colour.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase
@@ -175,9 +175,34 @@ LIGHT = Theme(
 
 THEME_TOKENS: dict[str, Theme] = {"dark": DARK, "light": LIGHT}
 
+GLASS_TOKENS: dict[str, Theme] = {
+    "dark": replace(
+        DARK,
+        bg="#141423",
+        bg_top="#171427",
+        bg_bottom="#101723",
+        muted="#B8B3C6",
+        faint="#B0AABE",
+    ),
+    "light": replace(
+        LIGHT,
+        bg="#EDEFF8",
+        bg_top="#F2F1FC",
+        bg_bottom="#E7EEF8",
+        muted="#525365",
+        faint="#5C5D70",
+        profit="#086E4D",
+        loss="#AA3049",
+    ),
+}
 
-def tokens(theme_name: str = "dark") -> Theme:
-    return THEME_TOKENS.get(theme_name, DARK)
+# The second wash adds a cool reflection to the user's accent.
+GLASS_REFLECTION = "#6F9ED2"
+
+
+def tokens(theme_name: str = "dark", *, liquid_glass: bool = False) -> Theme:
+    themes = GLASS_TOKENS if liquid_glass else THEME_TOKENS
+    return themes.get(theme_name, themes["dark"])
 
 
 # ------------------------------------------------------------------------ fonts

@@ -737,12 +737,15 @@ class MarketChart(QWidget):
     # ------------------------------------------------------------------- paint
     def _palette(self) -> dict[str, QColor]:
         name = theme.active_theme()
-        tokens = design.tokens(name)
+        glass = theme.active_liquid_glass()
+        tokens = design.tokens(name, liquid_glass=glass)
         light = name == "light"
         accent = theme.theme_accent(self._accent, name)
-        grid = QColor(tokens.border)
+        grid = QColor(tokens.muted if glass else tokens.border)
         grid.setAlpha(70 if not light else 55)
-        tooltip = QColor(tokens.panel)
+        tooltip = (
+            design.blend(tokens.panel, accent, 0.13) if glass else QColor(tokens.panel)
+        )
         tooltip.setAlpha(246)
         return {
             "text": QColor(tokens.text_soft),
@@ -1204,8 +1207,16 @@ class MarketDetail(QWidget):
 
         scroll = QScrollArea()
         self.scroll_area = scroll
+        scroll.setObjectName("MarketDetailScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # Сохраняем ширину карточки, когда загрузка добавляет строки истории.
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        scrollbar = scroll.verticalScrollBar()
+        scrollbar.setEnabled(False)
+        scrollbar.rangeChanged.connect(
+            lambda minimum, maximum: scrollbar.setEnabled(minimum < maximum)
+        )
         scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -1801,8 +1812,8 @@ class MarketDetail(QWidget):
         if pair is None:
             return
         pair[0].setText(value)
-        pair[1].setText(hint)
-        pair[1].setVisible(bool(hint))
+        # Пустая подпись занимает ту же высоту, что и строка с текстом.
+        pair[1].setText(hint or "\u00a0")
 
     # ------------------------------------------------------------------ table
     def _clear_table(self) -> None:

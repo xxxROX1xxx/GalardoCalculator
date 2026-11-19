@@ -135,7 +135,7 @@ def main() -> int:
             os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
     from PySide6.QtCore import QLocale, Qt, QTimer
-    from PySide6.QtGui import QFont, QGuiApplication
+    from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import QApplication
 
     QLocale.setDefault(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
@@ -149,12 +149,12 @@ def main() -> int:
     app.setApplicationName("Galardo")
     app.setApplicationDisplayName("Galardo")
     app.setStyle("Fusion")
-    app.setFont(QFont("Segoe UI", 10))
 
-    from galardo import icons, theme
+    from galardo import design, icons, theme
     from galardo.db import Database
     from galardo.mainwindow import MainWindow
 
+    app.setFont(design.app_font())
     app.setWindowIcon(icons.app_icon())
     assets = icons.ensure_ui_assets()
     app.setPalette(theme.palette(theme.DEFAULT_THEME, theme.DEFAULT_ACCENT))

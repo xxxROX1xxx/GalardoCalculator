@@ -445,6 +445,26 @@ class Database:
         return str(row["first"]) if row and row["first"] else None
 
     # -------------------------------------------------------------- statistics
+    def position_counts(self) -> tuple[int, int]:
+        """Closed buy+sell positions and active (bought, not sold) positions.
+
+        A closed position is a purchase with at least one explicitly linked
+        sale. A purchase without linked sales is still in stock. Standalone
+        sale rows are not counted as positions.
+        """
+        rows = self._conn.execute(
+            "SELECT id, side, parent_id FROM deals"
+        ).fetchall()
+        buys = {row["id"] for row in rows if row["side"] == "buy"}
+        sold = {
+            row["parent_id"]
+            for row in rows
+            if row["side"] == "sell"
+            and row["parent_id"] is not None
+            and row["parent_id"] in buys
+        }
+        return len(sold), len(buys - sold)
+
     def product_names(self, category: str | None = None) -> list[str]:
         """Unique item names, most recently traded first."""
         sql = "SELECT product, MAX(dealt_at) AS last_at FROM deals"

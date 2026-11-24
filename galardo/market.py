@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 
 from . import design, icons, paths, theme
 from .clothing_wiki import WIKI_CLOTHES
+from .vehicles_wiki import VEHICLE_NAMES
 from .widgets import (
     AmountLineEdit,
     ElidedLabel,
@@ -164,6 +165,7 @@ class MarketEntry:
     group: str = ""
     slot: str = ""
     image_alt: str | None = None
+    name_aliases: tuple[str, ...] = ()
 
     @property
     def subtitle(self) -> str:
@@ -457,18 +459,25 @@ class MarketService(QObject):
 
         for vehicle in payload.get("vehicleStatistics") or []:
             model = str(vehicle.get("model") or "")
+            source_name = str(vehicle.get("modelName") or "").strip()
+            game_name, real_name = VEHICLE_NAMES.get(model.casefold(), ("", ""))
+            name = game_name or source_name or model or "Транспорт"
+            aliases = tuple(dict.fromkeys(
+                alias for alias in (source_name, real_name) if alias and alias != name
+            ))
             entries.append(
                 MarketEntry(
                     key=f"{PREFIX}:vehicles:{model}",
                     kind="vehicles",
                     ident=model,
-                    name=str(vehicle.get("modelName") or model or "Транспорт"),
+                    name=name,
                     image=f"{VEHICLE_IMAGE_BASE}/{model}.png" if model else None,
                     sold=int(vehicle.get("soldCount") or 0),
                     avg=float(vehicle.get("averagePrice") or 0),
                     min=float(vehicle.get("minPrice") or 0),
                     max=float(vehicle.get("maxPrice") or 0),
                     total=int(vehicle.get("totalCount") or 0),
+                    name_aliases=aliases,
                 )
             )
 
@@ -2012,13 +2021,17 @@ class MarketPanel(QWidget):
 
     # ------------------------------------------------------------------ sort
     def _filtered(self) -> list[MarketEntry]:
-        query = self._query.lower()
+        query = self._query.casefold()
         entries = [entry for entry in self._entries if entry.kind == self._kind]
         if query:
-            entries = [entry for entry in entries if query in entry.name.lower()]
+            entries = [
+                entry for entry in entries
+                if any(query in name.casefold() for name in (entry.name, *entry.name_aliases))
+                or (entry.kind == "vehicles" and query in entry.ident.casefold())
+            ]
             entries.sort(
                 key=lambda entry: (
-                    not entry.name.lower().startswith(query),
+                    not entry.name.casefold().startswith(query),
                     -entry.sold,
                     entry.name.lower(),
                 )
@@ -2218,7 +2231,7 @@ class MarketPanel(QWidget):
 
     # ------------------------------------------------------------------- trade
     def set_stats_provider(self, provider) -> None:
-        """Callback ``(product, kind) -> (buy_count, buy_avg, sell_count, sell_avg)``."""
+        """Read the user's stats by product, category and previous names."""
         self.stats_provider = provider
 
     def _refresh_own_stats(self) -> None:
@@ -2226,7 +2239,7 @@ class MarketPanel(QWidget):
         if entry is None or self.stats_provider is None:
             return
         try:
-            data = self.stats_provider(entry.name, entry.kind)
+            data = self.stats_provider(entry.name, entry.kind, entry.name_aliases)
         except Exception:  # noqa: BLE001
             return
         if entry is not self._current:

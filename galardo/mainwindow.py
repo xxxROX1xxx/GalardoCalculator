@@ -128,8 +128,7 @@ class MainWindow(QWidget):
         self._editing_id: int | None = None
         self._quick_filled = False
         self._active_tab = "all"
-        self._week_expanded: dict[tuple[str, int], bool] = {}
-        self._pair_expanded: dict[tuple[str, int], bool] = {}
+        self._history_expanded: dict[str, bool] = {}
         self._week_entries: dict[int, list[HistoryEntry]] = {}
         self._pending_parent_id: int | None = None
         self._pending_product = ""
@@ -728,11 +727,19 @@ class MainWindow(QWidget):
             self.view_stack, self.history_page, 170, update=self.refresh_history
         )
 
-    def _remember_week(self, week: int, expanded: bool) -> None:
-        self._week_expanded[(self._active_tab, week)] = expanded
+    def _is_history_expanded(self, key: str, default: bool) -> bool:
+        if key in self._history_expanded:
+            return self._history_expanded[key]
+        saved = self.db.get_setting(key, "")
+        return saved == "1" if saved in ("0", "1") else default
 
-    def _remember_pair(self, deal_id: int, expanded: bool) -> None:
-        self._pair_expanded[(self._active_tab, deal_id)] = expanded
+    def _remember_history_expansion(self, key: str, expanded: bool) -> None:
+        self._history_expanded[key] = expanded
+        try:
+            with self.db._conn:
+                self.db.set_setting(key, "1" if expanded else "0")
+        except sqlite3.Error:
+            self._toast.show_message("Не удалось сохранить состояние истории")
 
     def _refresh_stats(self) -> None:
         """Top bar metrics always reflect the whole journal, not the filter."""
@@ -768,9 +775,9 @@ class MainWindow(QWidget):
                 group = weeks[week]
                 start = anchor.addDays(week * 7)
                 end = start.addDays(6)
-                expanded = self._week_expanded.get(
-                    (self._active_tab, week), week == newest
-                )
+                week_date = start.date().toString(Qt.DateFormat.ISODate)
+                week_key = f"history.week.{self._active_tab}.{week_date}.expanded"
+                expanded = self._is_history_expanded(week_key, week == newest)
                 section = WeekSection(
                     week + 1,
                     start.date(),
@@ -791,7 +798,7 @@ class MainWindow(QWidget):
                         widget = card
                     section.add_card(widget)
                 section.toggled.connect(
-                    lambda state, index=week: self._remember_week(index, state)
+                    lambda state, key=week_key: self._remember_history_expansion(key, state)
                 )
                 section.dealDropped.connect(
                     lambda ids, index, number=week: self._on_deal_dropped(
@@ -816,9 +823,8 @@ class MainWindow(QWidget):
         return card
 
     def _make_pair_section(self, entry: HistoryEntry, week: int) -> PairSection:
-        expanded = self._pair_expanded.get(
-            (self._active_tab, entry.deal.id), True
-        )
+        pair_key = f"history.pair.{entry.deal.id}.expanded"
+        expanded = self._is_history_expanded(pair_key, True)
         pair = PairSection(entry.deal, entry.children, self.currency, expanded)
         pair.entry_ids = entry.ids
         pair.editRequested.connect(self._load_deal_for_edit)
@@ -829,9 +835,7 @@ class MainWindow(QWidget):
             pair.add_card(self._make_deal_card(member))
         pair.enable_drag(entry.ids, week)
         pair.toggled.connect(
-            lambda state, deal_id=entry.deal.id: self._remember_pair(
-                deal_id, state
-            )
+            lambda state: self._remember_history_expansion(pair_key, state)
         )
         return pair
 
@@ -1272,11 +1276,11 @@ class MainWindow(QWidget):
         self._overlay.show_qimage(image, title)
 
     def _market_stats(
-        self, product: str, kind: str
+        self, product: str, kind: str, aliases: tuple[str, ...] = ()
     ) -> tuple[int, float | None, int, float | None]:
         """Мои сделки по предмету маркета за 30 дней (для карточки маркета)."""
         category = KIND_CATEGORY.get(kind, "transport")
-        return self.db.market_own_stats(product, category, 30)
+        return self.db.market_own_stats(product, category, 30, aliases=aliases)
 
     def _on_market_trade(self, payload: dict) -> None:
         """Сделка из карточки маркета: пишем её в общий журнал."""

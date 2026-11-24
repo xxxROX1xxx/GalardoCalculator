@@ -610,6 +610,8 @@ class Database:
         category: str,
         days: int = 30,
         today: date | None = None,
+        *,
+        aliases: tuple[str, ...] = (),
     ) -> tuple[int, float | None, int, float | None]:
         """Мои покупки и продажи одного предмета маркета за окно дней.
 
@@ -619,8 +621,8 @@ class Database:
         window = max(1, int(days))
         end = today or date.today()
         start = end - timedelta(days=window - 1)
-        needle = (product or "").strip().casefold()
-        if not needle:
+        names = {name.strip().casefold() for name in (product, *aliases) if name and name.strip()}
+        if not names:
             return 0, None, 0, None
 
         totals: dict[str, list[float]] = {
@@ -633,7 +635,7 @@ class Database:
             (category,),
         ).fetchall()
         for row in rows:
-            if str(row["product"]).strip().casefold() != needle:
+            if str(row["product"]).strip().casefold() not in names:
                 continue
             moment = parse_deal_moment(str(row["dealt_at"]))
             if moment is None or not (start <= moment.date() <= end):
